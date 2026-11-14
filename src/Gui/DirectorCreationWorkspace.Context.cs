@@ -46,6 +46,17 @@ internal sealed partial class DirectorCreationWorkspace
         public bool PartLocal { get; set; } = true;
         public bool ExtendedChain { get; set; }
         public bool AutoKey { get; set; } = true;
+        public bool Browser { get; set; } = true;
+        public bool Timeline { get; set; } = true;
+        public bool Particles { get; set; }
+        public bool ExactParts { get; set; }
+        public bool FreePose { get; set; }
+        public bool BonePoints { get; set; }
+        public bool AllBones { get; set; }
+        public bool Guides { get; set; } = true;
+        public CreationOverlayPreferences Overlay { get; set; } = new();
+        public CreationProjectDefaults Defaults { get; set; } = new();
+        public TimelineView DefaultTimeline { get; set; } = new();
         public Dictionary<string,TimelineView> Views { get; set; } = new();
     }
     private EditorPreferences editorPreferences = new();
@@ -67,7 +78,7 @@ internal sealed partial class DirectorCreationWorkspace
         activeViewKey=ViewKey;
         selectedTimelineKeys.Clear();
         editorPreferences.Views ??= new();
-        var state=editorPreferences.Views.GetValueOrDefault(ViewKey)??new();
+        var state=editorPreferences.Views.GetValueOrDefault(ViewKey)??editorPreferences.DefaultTimeline;
         timelineZoom=double.IsFinite(state.Zoom)?Math.Clamp(state.Zoom,.05,256):1;timelineStart=double.IsFinite(state.Start)?Math.Max(0,state.Start):0;
         restoreTimelineScroll=float.IsFinite(state.Scroll)?Math.Max(0,state.Scroll):0;
         timelineObjectExpanded.Clear();foreach(var p in state.Expanded ?? new())timelineObjectExpanded[p.Key]=p.Value;
@@ -79,6 +90,12 @@ internal sealed partial class DirectorCreationWorkspace
     private void RestoreEditorPreferences()
     {
         editorPreferences.Views ??= new();
+        editorPreferences.Overlay ??= new();editorPreferences.Overlay.Normalize();
+        editorPreferences.Defaults ??= new();editorPreferences.Defaults.Normalize();
+        editorPreferences.DefaultTimeline ??= new();
+        browser=editorPreferences.Browser;timeline=editorPreferences.Timeline;particlesPanel=editorPreferences.Particles;
+        exactPoseParts=editorPreferences.ExactParts;freePoseTransform=editorPreferences.FreePose;
+        showBones=editorPreferences.BonePoints;showAllBones=editorPreferences.AllBones;exportTextures=editorPreferences.Defaults.ExportTextures;
         toolsPanel=editorPreferences.Tools;properties=editorPreferences.Properties;view=editorPreferences.View;
         if(editorPreferences.LayoutVersion>=2){bonesPanel=editorPreferences.Bones;ikPanel=editorPreferences.Ik;actionsPanel=editorPreferences.Actions;}
         if(editorPreferences.LayoutVersion<3)host.MigrateCreationTools=true;
@@ -99,6 +116,10 @@ internal sealed partial class DirectorCreationWorkspace
         editorPreferences.ObjectAxis=objectRotationAxis;editorPreferences.PartAxis=poseRotationAxis;
         editorPreferences.ObjectLocal=objectSpace==ImGuizmoNET.MODE.LOCAL;editorPreferences.PartLocal=partSpace==ImGuizmoNET.MODE.LOCAL;
         editorPreferences.ExtendedChain=extendedPullChain;
+        editorPreferences.Browser=browser;editorPreferences.Timeline=timeline;editorPreferences.Particles=particlesPanel;
+        editorPreferences.ExactParts=exactPoseParts;editorPreferences.FreePose=freePoseTransform;
+        editorPreferences.BonePoints=showBones;editorPreferences.AllBones=showAllBones;
+        editorPreferences.Guides=Runtime.Guides;editorPreferences.Defaults.ExportTextures=exportTextures;
         api.StoreModConfig(editorPreferences,"vsdirector-creation-editor.json");
     }
     private void RememberSceneContext()

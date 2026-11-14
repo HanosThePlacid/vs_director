@@ -62,6 +62,7 @@ public sealed partial class DirectorCreationProject
                     && key.Bones is not null && key.Hidden is not null && key.Bones.All(p=>p.Key!=Guid.Empty && Part(obj.ModelId,p.Key) && Transform(p.Value))
                     && key.Hidden.All(p=>p!=Guid.Empty && Part(obj.ModelId,p)), "Invalid scene pose keys.");
             Require(obj.PlayerBody is not null && obj.PlayerBody.Valid(), "Invalid player collision settings.");
+            Require(obj.BindingSpace is null || obj.BindingSpace.Valid(), "Invalid parent binding space.");
             Require(obj.ActorHand is >= 0 and <= 2 && (obj.RecordingChannels & ~CreationRecordingChannels.All) == 0, "Invalid actor recording options.");
             Require(obj.IkChains is not null && double.IsFinite(obj.IkWeight) && obj.IkWeight is >= 0 and <= 1, "Invalid IK configuration.");
             foreach (var chain in obj.IkChains)
@@ -91,6 +92,8 @@ public sealed partial class DirectorCreationProject
             Require(double.IsFinite(obj.Glow) && obj.Glow is >= 0 and <= 1 && obj.Opacity is >= 0 and <= 1 && obj.Fov is >= 1 and <= 170
                 && obj.ParticleCount is >= 0 and <= 10000 && obj.ParticleLife is > 0 and <= 300
                 && obj.ParticleStart >= 0 && obj.ParticleDuration >= 0, "对象外观或粒子参数无效。");
+            obj.ParticleSettings?.Validate();
+            obj.ParticleEffect?.Validate();
             List(obj.Blocks, "结构方块");
             Require(obj.Blocks.Count <= 4096 && obj.Blocks.All(b => b.Code is not null && b.Position.Finite()), "结构方块数据无效。");
         }

@@ -1,4 +1,4 @@
-using System.Numerics;
+﻿using System.Numerics;
 using ImGuiNET;
 using Vintagestory.API.Client;
 using Vintagestory.API.Common;
@@ -26,8 +26,9 @@ internal sealed partial class DirectorWorkspaceHud
     private const int ScreenRotationAxis = 6;
     private CameraPreset? cameraDragOriginal, cameraDragPose;
     private DirectorReplayViewportTimeline? cameraDragTimeline;
-    private Vector3 cameraDragAxis, cameraDragPreviousDirection, cameraDragStartDirection, cameraDragPlanePoint;
-    private float cameraDragParameter, cameraDragAngle;
+    private Vector3 cameraDragAxis, cameraDragPreviousDirection, cameraDragStartDirection;
+    private float cameraDragAngle;
+    private DirectorCreationDrag? cameraTranslationDrag;
     private int cameraDragAxisIndex = -1;
     private int cameraHoverAxis = -1;
     private Guid cameraDragReplayId, cameraDragSceneId;
@@ -171,9 +172,17 @@ internal sealed partial class DirectorWorkspaceHud
     {
         var pivot=CameraPivot(pose); if(!ProjectCameraPoint(pivot,out var center)) return;
         float radius=CameraGizmoRadius(pose);
+        var view=capi.Render.PerspectiveViewMat;
+        double depth=-(view[2]*pivot.X+view[6]*pivot.Y+view[10]*pivot.Z+view[14]);
+        float displayScale=Math.Min(1,(float)Math.Max(.0001,depth)*.25f/radius);
+        Vector2? ProjectHandle(Vector3 offset)
+            => ProjectCameraPoint(Add(pivot,offset*displayScale),out var point)?center+(point-center)/displayScale:null;
+        // Keep near-camera handles in front of the eye while retaining true
+        // perspective axis directions and their established on-screen size.
         replayHandles ??= new();
         replayHandles.Draw(draw,center,CameraWorldUnitsPerPixel(pivot),radius,capi.Render.PerspectiveViewMat,
-            [Vector3.UnitX,Vector3.UnitY,Vector3.UnitZ],cameraTool==CameraTool.Rotate,cameraTool==CameraTool.Pivot,cameraDragAxisIndex,false,cameraHoverAxis);
+            [Vector3.UnitX,Vector3.UnitY,Vector3.UnitZ],cameraTool==CameraTool.Rotate,cameraTool==CameraTool.Pivot,cameraDragAxisIndex,false,cameraHoverAxis, project: cameraTool == CameraTool.Rotate ? null
+                : ProjectHandle);
         foreach(var line in replayHandles.Lines) cameraToolLines.Add(new(line.A,line.B,line.Axis,line.CameraId));
         foreach(var face in replayHandles.Triangles) cameraToolTriangles.Add(new(face.A,face.B,face.C,face.Axis));
         cameraToolHeads.Add((cameraToolSelection,center));
@@ -417,12 +426,8 @@ internal sealed partial class DirectorWorkspaceHud
         }
         else
         {
-            if (!CameraPointerRay(x, y, CameraPivot(pose), out var origin, out var direction)) return;
-            if (axis >= 3)
-            {
-                if (!CameraPointerPlanePoint(origin, direction, axisVector, out cameraDragPlanePoint)) return;
-            }
-            else if (!DirectorCameraManipulation.TryAxisParameter(origin, direction, axisVector, out cameraDragParameter)) return;
+            cameraTranslationDrag = BeginCameraTranslationDrag(CameraPivot(pose), axisVector, axis >= 3, new(x, y));
+            if (cameraTranslationDrag is null) return;
         }
         EndReplayViewportFreeCameraPointerInput();
         owner.PauseReplayForTimelineScrub();
@@ -439,8 +444,6 @@ internal sealed partial class DirectorWorkspaceHud
     private bool MoveCameraToolDrag(int x, int y)
     {
         if (cameraDragOriginal is not { } original || cameraDragTimeline is null) return false;
-        Vector3 origin = default, direction = default;
-        if (cameraTool != CameraTool.Rotate && !CameraPointerRay(x, y, CameraPivot(original), out origin, out direction)) return true;
         bool snap = IsControlDown();
         if (cameraTool == CameraTool.Rotate)
         {
@@ -451,20 +454,11 @@ internal sealed partial class DirectorWorkspaceHud
             float angle = snap ? MathF.Round(cameraDragAngle / (MathF.PI / 12)) * (MathF.PI / 12) : cameraDragAngle;
             cameraDragPose = DirectorCameraManipulation.Rotate(original, cameraDragAxis, angle, cameraDragPose);
         }
-        else if (cameraDragAxisIndex >= 3)
-        {
-            if (!CameraPointerPlanePoint(origin, direction, cameraDragAxis, out var current)) return true;
-            Vector3 offset = current - cameraDragPlanePoint;
-            offset -= cameraDragAxis * Vector3.Dot(offset, cameraDragAxis);
-            if (snap) offset = new(MathF.Round(offset.X * 4) / 4, MathF.Round(offset.Y * 4) / 4, MathF.Round(offset.Z * 4) / 4);
-            cameraDragPose = DirectorCameraManipulation.Translate(original, offset, cameraTool == CameraTool.Pivot);
-        }
         else
         {
-            if (!DirectorCameraManipulation.TryAxisParameter(origin, direction, cameraDragAxis, out float parameter)) return true;
-            float distance = parameter - cameraDragParameter;
-            if (snap) distance = MathF.Round(distance * 4) / 4;
-            cameraDragPose = DirectorCameraManipulation.Translate(original, cameraDragAxis * distance, cameraTool == CameraTool.Pivot);
+            if (cameraTranslationDrag is null || !cameraTranslationDrag.TryOffset(new(x, y), out var offset)) return true;
+            if (snap) offset = new(MathF.Round(offset.X * 4) / 4, MathF.Round(offset.Y * 4) / 4, MathF.Round(offset.Z * 4) / 4);
+            cameraDragPose = DirectorCameraManipulation.Translate(original, offset, cameraTool == CameraTool.Pivot);
         }
         var clip = cameraDragTimeline.Clips.FirstOrDefault(c => c.Id == cameraToolSelection);
         if (clip is not null) clip.CameraPose = cameraDragPose;
@@ -485,6 +479,7 @@ internal sealed partial class DirectorWorkspaceHud
         bool valid = cameraDragReplayId == owner.ActiveReplayId && timeline?.ActiveSceneId == owner.ReplayViewportTimeline.ActiveSceneId;
         cameraDragOriginal = cameraDragPose = null;
         cameraDragTimeline = null;
+        cameraTranslationDrag = null;
         cameraDragAxisIndex = -1;
         if (!cancel && valid && changed && timeline is not null)
         {
@@ -494,28 +489,17 @@ internal sealed partial class DirectorWorkspaceHud
         }
     }
 
-    private bool CameraPointerRay(int x, int y, Vec3d pivot, out Vector3 origin, out Vector3 direction)
+    private DirectorCreationDrag? BeginCameraTranslationDrag(Vec3d pivot, Vector3 axis, bool plane, Vector2 pointer)
     {
-        origin = direction = default;
-        if (!ProjectCameraPoint(pivot, out var center)) return false;
-        var m = capi.Render.PerspectiveViewMat;
-        Vector3 right = new((float)m[0], (float)m[4], (float)m[8]);
-        Vector3 up = new((float)m[1], (float)m[5], (float)m[9]);
-        // Invert the same view-plane projection used to draw the controls.
-        origin = (right * (x - center.X) - up * (y - center.Y)) * CameraWorldUnitsPerPixel(pivot);
-        direction = -CameraScreenRotationAxis();
-        return float.IsFinite(direction.X) && float.IsFinite(direction.Y) && float.IsFinite(direction.Z);
-    }
-
-    private static bool CameraPointerPlanePoint(Vector3 origin, Vector3 direction, Vector3 normal, out Vector3 point)
-    {
-        point = default;
-        float denominator = Vector3.Dot(direction, normal);
-        if (Math.Abs(denominator) < 1e-6f) return false;
-        // The orthographic pointer starts in the pivot's view plane. A valid
-        // handle plane can lie on either side, so intersect the whole line.
-        point = origin - direction * (Vector3.Dot(origin, normal) / denominator);
-        return float.IsFinite(point.X) && float.IsFinite(point.Y) && float.IsFinite(point.Z);
+        var render = capi.Render;
+        if (!DirectorWorkspaceViewportRuntime.TryMapGamePointToPhysical(0, 0, out var x, out var y)
+            || !DirectorWorkspaceViewportRuntime.TryMapGamePointToPhysical(render.FrameWidth, render.FrameHeight, out var right, out var bottom)) return null;
+        // Rebase in double precision before converting to float, including dimension Y.
+        var view = DirectorCreationMath.ProjectView(render.PerspectiveViewMat, new(pivot.X, pivot.Y, pivot.Z), 0);
+        var p = render.PerspectiveProjectionMat.Select(v => (float)v).ToArray();
+        static Matrix4x4 Matrix(float[] m) => new(m[0],m[1],m[2],m[3],m[4],m[5],m[6],m[7],m[8],m[9],m[10],m[11],m[12],m[13],m[14],m[15]);
+        return DirectorCreationDrag.Begin(Matrix(view) * Matrix(p), new((float)x, (float)y),
+            new((float)(right - x), (float)(bottom - y)), pointer, Vector3.Zero, axis, plane);
     }
 
     private static Vec3d CameraPivot(CameraPreset pose) => new(pose.X + pose.EditorPivotOffsetX,

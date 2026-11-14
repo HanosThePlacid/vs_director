@@ -11,13 +11,6 @@ namespace VSDirector.Runtime;
 
 internal sealed partial class DirectorCreationRuntime
 {
-    private void UpdateParticles()
-    {
-        // Native particle pools cannot be rewound or faded at clip boundaries.
-        // Always use the absolute-time renderer for deterministic playback/export.
-        Renderer.NativeParticlesActive = false;
-    }
-
     internal static DirectorCreationRuntime? Current { get; private set; }
     private readonly Dictionary<Entity, (bool Rendered, bool Shadow)> hiddenEntities = new();
     internal bool ShouldHideEntity(Entity entity) => Enabled && Session.Project is not null
@@ -50,10 +43,12 @@ internal sealed partial class DirectorCreationRuntime
         }
     }
     private void FrameReady(DirectorCreationProject project, CreationFrame frame)
+        => PrepareRuntimeFrame(project,frame,true);
+    private void PrepareRuntimeFrame(DirectorCreationProject project,CreationFrame frame,bool publish)
     {
         foreach (var state in frame.Objects.Values)
         {
-            if (performanceRunning && state.Source.Id == performanceActor && (observingWorldActor ? api.World.GetEntityById(observedEntity) : api.World.Player?.Entity) is { } player)
+            if (publish && performanceRunning && state.Source.Id == performanceActor && (observingWorldActor ? api.World.GetEntityById(observedEntity) : api.World.Player?.Entity) is { } player)
             {
                 var tr = state.Transform with { Position = new CreationVector(player.Pos.X, player.Pos.Y, player.Pos.Z) - project.Origin, Rotation = new(0, (player is EntityAgent agent ? agent.BodyYaw : player.Pos.Yaw) * GameMath.RAD2DEG, 0) };
                 state.Transform = tr; state.World = tr.Matrix();
@@ -62,7 +57,7 @@ internal sealed partial class DirectorCreationRuntime
                 state.Visible = false;
             }
             foreach (var behavior in Extensions.Behaviors.Values) behavior.Evaluate(state, frame.Time);
-            if (state.Source.ReplacePlayerUid.Length > 0 && !state.HasPerformance && !state.HasPositionAnimation)
+            if (publish && state.Source.ReplacePlayerUid.Length > 0 && !state.HasPerformance && !state.HasPositionAnimation)
             {
                 var entity = api.World.AllOnlinePlayers.FirstOrDefault(p => p.PlayerUID == state.Source.ReplacePlayerUid)?.Entity;
                 if (entity is not null)
@@ -76,24 +71,24 @@ internal sealed partial class DirectorCreationRuntime
             if (project.Models.Find(m => m.Id == state.Source.ModelId) is { } model && Extensions.Behaviors.Count > 0)
             { state.Bones.Clear(); DirectorCreationEvaluator.EvaluateBones(model,state); }
         }
-        RefreshAttachments(frame);
+        RefreshAttachments(frame,publish);
     }
     private readonly Dictionary<byte[], ItemStack?> performanceItems = new(ReferenceEqualityComparer.Instance);
-    private void RefreshAttachments(CreationFrame frame)
+    private void RefreshAttachments(CreationFrame frame,bool publish=true)
     {
-        Renderer.HeldItems.Clear();
+        if(publish)Renderer.HeldItems.Clear();
         var resolved = new HashSet<Guid>();
         Matrix4x4 Resolve(CreationObjectState state)
         {
             if (!resolved.Add(state.Source.Id) || !frame.Objects.TryGetValue(state.Source.ParentId, out var parent)) return state.World;
             var parentWorld = Resolve(parent);
             var bone = parent.Bones.GetValueOrDefault(state.Source.ParentPartId, Matrix4x4.Identity);
-            var local = state.Transform.Matrix();
+            var local = state.Transform.Matrix() * (state.Source.BindingSpace?.Matrix() ?? Matrix4x4.Identity);
             if (state.Source.ActorHand is 1 or 2)
             {
                 bool right = state.Source.ActorHand == 1;
                 ItemStack? stack = null; bool overrides = false;
-                if (performanceRunning && parent.Source.Id == performanceActor)
+                if (publish && performanceRunning && parent.Source.Id == performanceActor)
                 {
                     var entity = observingWorldActor ? api.World.GetEntityById(observedEntity) : api.World.Player?.Entity;
                     if (entity is EntityAgent agent) { stack = (right ? agent.RightHandItemSlot : agent.LeftHandItemSlot)?.Itemstack; overrides = true; }
@@ -131,7 +126,7 @@ internal sealed partial class DirectorCreationRuntime
                 if (stack is not null)
                 {
                     var info = api.Render.GetItemStackRenderInfo(new DummySlot(stack), right ? EnumItemRenderTarget.HandTp : EnumItemRenderTarget.HandTpOff, 0);
-                    if (info?.ModelRef is not null) Renderer.HeldItems[state.Source.Id] = info;
+                    if (publish && info?.ModelRef is not null) Renderer.HeldItems[state.Source.Id] = info;
                     transform = info?.Transform ?? transform;
                 }
                 if (transform is not null)

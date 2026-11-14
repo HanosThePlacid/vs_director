@@ -6,10 +6,14 @@ namespace VSDirector.Data;
 public static class DirectorCreationShape
 {
     public static (CreationModel Model, List<CreationAnimation> Animations) Import(string json, string name)
+        => ImportCore(json, name, true);
+    public static CreationModel ImportGeometry(string json, string name) => ImportCore(json, name, false).Model;
+    private static (CreationModel Model, List<CreationAnimation> Animations) ImportCore(string json, string name, bool includeAnimations)
     {
         var root = JsonNode.Parse(json, documentOptions: new() { AllowTrailingCommas = true, CommentHandling = System.Text.Json.JsonCommentHandling.Skip }) as JsonObject
             ?? throw new InvalidDataException("模型需要 Vintage Story Shape JSON 对象。");
         if (root["elements"] is not JsonArray elements) throw new InvalidDataException("模型缺少 elements。");
+        if (!includeAnimations) root.Remove("animations");
         var model = new CreationModel { Name = name, TextureWidth = (int)N(root, "textureWidth", 16), TextureHeight = (int)N(root, "textureHeight", 16), Extra = (JsonObject)root.DeepClone() };
         foreach (string field in new[] { "elements", "animations", "textures", "textureWidth", "textureHeight" }) model.Extra.Remove(field);
         if (root["textures"] is JsonObject textures)

@@ -12,11 +12,16 @@ internal static class SmokeTests
 {
     private static readonly (string Name, Func<Task> Run)[] Cases =
     {
-        ("creation world/dimension isolation, legacy handling and independent cross-world copies", RunSync(CreationWorldScopeChecks.Run)),
+        ("advanced particle JSON, deterministic rewind/export, environments, children and budgets", RunSync(CreationAdvancedParticleChecks.Run)),
+        ("creation defaults isolation, minimal overlays and authored/recorded hand visibility", RunSync(CreationPreferencesChecks.Run)),
+        ("bounded project listing, cache invalidation and recovery metadata", RunSync(CreationListingChecks.Run)),
+        ("perspective constrained drags and editable particle physics, bounds, persistence and dependencies", RunSync(CreationDragParticleChecks.Run)),
+        ("creation world/dimension isolation, legacy handling and same-world duplication", RunSync(CreationWorldScopeChecks.Run)),
         ("actor appearance replacement preserves bones, poses, attachments and shared action isolation", RunSync(CreationAppearanceChecks.Run)),
         ("recorded key reduction preserves endpoints, turns, corners and authored interpolation", RunSync(CreationKeyReductionChecks.Run)),
         ("semantic rig cache, garments, bounded chains, manual roots, reflected CCD and invalid targets", RunSync(CreationRigSelectionChecks.Run)),
         ("creation explicit editing tasks, auto pose seed, atomic history, cancellation and manual preview", RunSync(CreationEditingContextChecks.Run)),
+        ("creation parenting preserves world pose, animation, affine scale, drafts, persistence and undo", RunSync(CreationParentingChecks.Run)),
         ("30 Hz creation clock, integer ruler ticks, legacy/source timing and independent export FPS", RunSync(CreationTimingChecks.Run)),
         ("scene pose keys, synchronized clock, sparse storage, undo, recovery and remapping", RunSync(CreationScenePoseChecks.Run)),
         ("explicit joint seams preserve matching corners, isolate actors and reject incompatible export", RunSync(CreationJointSeamChecks.Run)),
@@ -25,6 +30,7 @@ internal static class SmokeTests
         ("creation performance migration, reload, deterministic seeking and duplication", RunSync(CreationActorChecks.PerformanceStorage)),
         ("creation rig controls, reflected actor IK, action playback and reference lifecycle", RunSync(CreationRigWorkflowChecks.Run)),
         ("pose drafts, atomic save, undo, recovery, surface picking and generic CCD", RunSync(CreationPoseEditingChecks.Run)),
+        ("pose gesture allocations, cancellation and mixed geometry undo", RunSync(CreationPoseGestureChecks.Run)),
         ("creation performance conversion, isolated bone editing and strict clip boundaries", RunSync(CreationPerformanceEditingChecks.Run)),
         ("creation background lifecycle, used resources and recoverable recording dependencies", RunSync(CreationDependencyChecks.Run)),
         ("creation clip gesture allocation, undo isolation, recording beyond ten seconds and world coordinates", RunSync(CreationChecks.InteractionAndRecording)),

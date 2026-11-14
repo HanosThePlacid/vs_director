@@ -95,6 +95,45 @@ internal sealed class DirectorCameraController : IDisposable
 
     public bool IsFreeCamera => freeCameraActive;
 
+    internal bool ZoomFreeCamera(double delta, CreationVector? target)
+    {
+        if (disposed || !freeCameraActive || activeCamera is not { } camera || externalInputLocked
+            || !double.IsFinite(delta) || delta == 0) return false;
+        var forward = EntityPos.GetViewVector(DegreesToRadians(camera.Pitch), DegreesToRadians(camera.Yaw));
+        double x = forward.X, y = forward.Y, z = forward.Z;
+        double distance = Math.Max(.25, config.ReplayFreeCameraSpeed * .1) * delta;
+        if (target is { } point && point.Finite())
+        {
+            x = point.X - camera.X; y = point.Y - camera.Y; z = point.Z - camera.Z;
+            double length = Math.Sqrt(x*x + y*y + z*z);
+            if (length < .000001) return false;
+            double next = Math.Max(.25, length * Math.Exp(-Math.Clamp(delta, -10, 10) * .15));
+            if (delta > 0 && length <= .25) return false;
+            distance = length - next; x /= length; y /= length; z /= length;
+        }
+        // Move the editor camera only; keep its orientation, FOV and free-look
+        // input state. Never reactivate a shooting camera or scale the actor.
+        activeCamera = camera.DeepClone();
+        activeCamera.X += x * distance; activeCamera.Y += y * distance; activeCamera.Z += z * distance;
+        preparedCameraPose = null;
+        return true;
+    }
+    internal bool OrbitFreeCamera(CreationVector target, float dx, float dy)
+    {
+        if (disposed || !freeCameraActive || activeCamera is not { } camera || externalInputLocked
+            || !target.Finite() || !float.IsFinite(dx) || !float.IsFinite(dy) || dx == 0 && dy == 0) return false;
+        double x = target.X-camera.X, y = target.Y-camera.Y, z = target.Z-camera.Z;
+        double radius = Math.Sqrt(x*x+y*y+z*z);
+        if (radius < .001) return false;
+        double yaw = Math.Atan2(x,z) * DegreesPerRadian - dx * .4;
+        double pitch = Math.Clamp(180 - Math.Asin(Math.Clamp(y/radius,-1,1))*DegreesPerRadian + dy*.4, MinNativePitchDegrees, MaxNativePitchDegrees);
+        var forward = EntityPos.GetViewVector(DegreesToRadians((float)pitch), DegreesToRadians((float)yaw));
+        activeCamera = camera.DeepClone(); activeCamera.Yaw = (float)CameraFollowMath.NormalizeDegrees(yaw);
+        activeCamera.Pitch = (float)pitch; activeCamera.Roll = 0;
+        activeCamera.X = target.X-forward.X*radius; activeCamera.Y = target.Y-forward.Y*radius; activeCamera.Z = target.Z-forward.Z*radius;
+        preparedCameraPose = null; return true;
+    }
+
     internal bool UsesDetachedThirdPersonRendering(long entityId)
     {
         EntityPlayer? local = capi.World.Player?.Entity as EntityPlayer;

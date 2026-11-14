@@ -50,11 +50,7 @@ internal sealed partial class DirectorCreationRuntime
     }
     internal void UseCurrentWorld()
     {
-        if (Session.Project is { } existing && !ProjectWorldMatches)
-        {
-            DuplicateProject(existing.Id, toCurrentWorld: true);
-            return;
-        }
+        if (Session.Project is { } existing) RequireProjectWorld(existing);
         Session.Edit(L("creation-use-current-world"), p =>
         {
             p.SetBackground(Guid.Empty);

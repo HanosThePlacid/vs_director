@@ -36,6 +36,22 @@ internal static class CreationEditingContextChecks
             s.SetEditTask(CreationEditTask.Placement);s.Seek(2);s.BeginGesture();s.SetTransform(actor.Id,Guid.Empty,new(){Position=new(9,0,0)});s.Changed();s.EndGesture("base");
             if(s.Project.Objects[0].Transform.Position.X!=9||s.Project.Tracks[0].Keys.First(k=>k.Time==2).Value.X!=5)throw new Exception("Base edit rewrote animation");
             s.Save();s.Store.Load(project.Id).Validate();
+            var camera=new CreationSceneObject{Kind=CreationObjectKind.Camera,Transform=new(){Position=new(2,3,4)}};
+            var cameraProject=new DirectorCreationProject{Origin=new(500000,100,500000),Objects=[camera],CameraId=camera.Id};
+            var position=new CreationTrack{ObjectId=camera.Id,Channel=CreationChannel.Position};
+            DirectorCreationEdits.SetKey(position,0,new(2,3,4));DirectorCreationEdits.SetKey(position,4,new(22,3,4));cameraProject.Tracks.Add(position);
+            s.Open(cameraProject);s.Seek(2);
+            var preview=DirectorCreationEvaluator.Camera(cameraProject,s.Frame!)!;
+            s.RecordTransformKeys(camera.Id,Guid.Empty);
+            var recorded=DirectorCreationEvaluator.Camera(cameraProject,s.Frame!)!;
+            if(preview.X!=recorded.X||preview.Y!=recorded.Y||preview.Z!=recorded.Z||position.Keys.Single(k=>k.Time==2).Value.X!=12)throw new Exception("Recording preview replaced evaluated camera with its base transform");
+            s.Undo();if(s.Project!.Tracks.Count!=1||s.Project.Tracks[0].Keys.Count!=2)throw new Exception("Transform keys did not undo atomically");
+            s.Redo();s.SetEditTask(CreationEditTask.Animation);s.AutoKey=false;s.Seek(3);
+            var before=s.Frame!.Objects[camera.Id].Transform with{};
+            s.BeginGesture();s.SetTransform(camera.Id,Guid.Empty,before with{Position=new(30,4,5),Pivot=new(.5,0,0),Rotation=new(0,35,0)});s.Changed();s.EndGesture("camera draft");
+            var draft=s.Frame!.Objects[camera.Id].Transform with{};s.RecordTransformKeys(camera.Id,Guid.Empty);
+            if(s.HasTransformDraft||s.Frame!.Objects[camera.Id].Transform!=draft)throw new Exception("Recording preview lost draft position/rotation/pivot");
+            s.Seek(0);if(s.Frame!.Objects[camera.Id].Transform.Position!=new CreationVector(2,3,4))throw new Exception("Recording preview overwrote opening camera pose");
         }
         finally{if(Directory.Exists(root))Directory.Delete(root,true);}
     }

@@ -88,12 +88,44 @@ internal static partial class DirectorImGuiProbe
             project.Objects.Add(second.Target); project.Objects.Add(second.Pole); actor.IkChains.Add(second.Chain); session.Changed();
             Call("Select", controls.Target); Frame();
             var objectPoints = (List<(Guid Id, Vector2 Point)>)AccessTools.Field(workspace.GetType(), "objectPoints").GetValue(workspace)!;
-            if (objectPoints.Any(p => p.Id == second.Target.Id || p.Id == second.Pole.Id)) throw new Exception("Inactive IK controls are still visible/pickable");
+            if (!objectPoints.Any(p => p.Id == second.Target.Id) || objectPoints.Any(p=>p.Id==second.Pole.Id)) throw new Exception("Limb targets must stay discoverable while inactive poles stay hidden");
             if (!objectPoints.Any(p => p.Id == controls.Target.Id) || AccessTools.Property(workspace.GetType(), "RigActor").GetValue(workspace) != actor)
                 throw new Exception("Selecting an IK control lost its actor context");
             AccessTools.Field(workspace.GetType(), "showBones").SetValue(workspace, false); Frame();
-            if (points.Count != 0 || objectPoints.Any(p => p.Id == controls.Pole.Id) || !objectPoints.Any(p => p.Id == controls.Target.Id)) throw new Exception("Hidden rig must retain only its selected control");
+            if (points.Count != 0 || !objectPoints.Any(p => p.Id == controls.Pole.Id) || !objectPoints.Any(p => p.Id == controls.Target.Id)) throw new Exception("IK goals must remain independent of bone markers");
+            var overlay=(CreationOverlayPreferences)AccessTools.Property(workspace.GetType(),"Overlay").GetValue(workspace)!;
+            overlay.IkPoles=false;Frame();
+            if(objectPoints.Any(p=>p.Id==controls.Pole.Id))throw new Exception("Hidden pole remained pickable");
+            overlay.IkTargets=false;Frame();
+            if(objectPoints.Any(p=>p.Id==controls.Target.Id))throw new Exception("Hidden target remained pickable");
+            overlay.IkPoles=overlay.IkTargets=true;overlay.AllChains=true;Frame();
+            if(!objectPoints.Any(p=>p.Id==second.Target.Id))throw new Exception("All-chain preference lost the other target");
+            controls.Chain.Enabled=false;Frame();
+            if(objectPoints.Any(p=>p.Id==controls.Target.Id))throw new Exception("Disabled chain still has selectable controls");
+            overlay.AllChains=false;controls.Chain.Enabled=true;
+            Call("Select",actor);AccessTools.Field(workspace.GetType(),"selectedIkChain").SetValue(workspace,Guid.Empty);Frame();
+            if(!objectPoints.Any(p=>p.Id==controls.Target.Id)||objectPoints.Any(p=>p.Id==controls.Pole.Id||p.Id==second.Pole.Id))throw new Exception("Actor selection without an active chain must expose targets only");
             Console.WriteLine("PASS focused rig display hides unrelated bones and inactive IK controls, retains actor context and clears hidden hit targets");
+            upper.Name="UpperArmR";lower.Name="LowerArmR";
+            session.BeginScenePose(actor.Id);session.SelectedPart=lower.Id;
+            AccessTools.Field(workspace.GetType(),"wholeObjectSelection").SetValue(workspace,false);
+            AccessTools.Field(workspace.GetType(),"exactPoseParts").SetValue(workspace,true);
+            io.MousePos=new(1000,750);Frame();Frame();
+            var grips=(List<(Guid Part,Vector2 Point,Vector3 World)>)AccessTools.Field(workspace.GetType(),"poseHandles").GetValue(workspace)!;
+            if(grips.Count!=1||objectPoints.Any(p=>p.Id==controls.Target.Id||p.Id==controls.Pole.Id))throw new Exception("Pose mode must expose one limb grip without duplicate persistent IK markers");
+            var firstPose=session.CapturePose();session.SavePose();session.Seek(1);
+            io.MousePos=grips.Single().Point;Frame();Frame();io.MouseDown[0]=true;Frame();io.MousePos+=new Vector2(32,-18);Frame();io.MouseDown[0]=false;Frame();
+            if(!session.HasPoseDraft||session.CapturePose().Bones.All(p=>p.Value==firstPose.Bones[p.Key]))throw new Exception("Direct limb drag did not pose the actor");
+            session.SavePose();
+            if(actor.PoseKeys.Count!=2||session.SelectedAnimation!=Guid.Empty)throw new Exception("Direct limb poses were not saved to the scene timeline");
+            var endPose=session.CapturePose();session.Seek(0);if(session.CapturePose().Bones.All(p=>p.Value==endPose.Bones[p.Key]))throw new Exception("Direct limb drag overwrote the starting pose");
+            overlay.PoseHandles=false;Frame();if(grips.Count!=0)throw new Exception("Hidden automatic limb handles remain pickable");overlay.PoseHandles=true;
+            actor.PoseKeys.Clear();session.EndScenePose();session.EnterAnimation(editingAction.Id,actor.Id);session.Changed();
+            AccessTools.Field(workspace.GetType(),"exactPoseParts").SetValue(workspace,false);
+            AccessTools.Field(workspace.GetType(),"partTool").SetValue(workspace,Enum.Parse(AccessTools.Field(workspace.GetType(),"partTool").FieldType,"Rotate"));
+            AccessTools.Field(workspace.GetType(),"posePull").SetValue(workspace,false);
+            upper.Name="Upper";lower.Name="Lower";session.Changed();
+            Console.WriteLine("PASS direct automatic limb pointer drag saves separate scene poses without persistent controls or starting-pose overwrite; hidden handles are not pickable");
             actor.IkChains.Clear(); session.SelectedObject = actor.Id; session.SelectedPart = Guid.Empty; session.Changed();
             Call("NewAnimation", "Pose workflow");
             if (!session.PoseEditing || session.EditingAnimation!.Tracks.All(t => t.PartId != lower.Id)) throw new Exception("New action did not seed the initial pose");
@@ -199,7 +231,7 @@ internal static partial class DirectorImGuiProbe
             gizmoWorld=Matrix4x4.Identity;AccessTools.Field(workspace.GetType(),"poseRotationAxis").SetValue(workspace,0);
             GizmoFrame();
             var onlyAxis=((IEnumerable<(Vector2 A,Vector2 B,int Axis,Guid CameraId)>)AccessTools.Property(sharedHandles.GetType(),"Lines").GetValue(sharedHandles)!).ToArray();
-            if(onlyAxis.Length==0 || onlyAxis.Any(l=>l.Axis!=0)) throw new Exception("Single-axis posing still draws intersecting rotation rings");
+            if(onlyAxis.Length==0 || onlyAxis.Any(l=>l.Axis!=0)) throw new Exception("Single-axis posing still draws intersecting rotation rings: count="+onlyAxis.Length+" axes="+string.Join(",",onlyAxis.Select(l=>l.Axis).Distinct())+" pose="+session.PoseEditing+" part="+session.SelectedPart+" operation="+AccessTools.Field(workspace.GetType(),"operation").GetValue(workspace)+" pending="+(AccessTools.Field(workspace.GetType(),"pendingTransition").GetValue(workspace)!=null));
             io.MousePos=onlyAxis.Select(l=>l.A).MaxBy(p=>Vector2.DistanceSquared(p,new(640,400)));GizmoFrame();GizmoFrame();
             io.MouseDown[0]=true;GizmoFrame();io.MousePos+=new Vector2(20,0);GizmoFrame();io.MouseDown[0]=false;GizmoFrame();
             if(Math.Abs(gizmoWorld.M22-MathF.Cos(20*MathF.PI/(180*(float)GuiElement.scaled(1))))>.003f) throw new Exception("Edge-on pose axis did not follow stable pointer drag: "+gizmoWorld);
@@ -234,6 +266,7 @@ internal static partial class DirectorImGuiProbe
             Console.WriteLine("PASS Delete shortcut deletes the selected hierarchy and leaves text editing alone");
             Console.WriteLine("PASS pose action creation, same-frame multibone edits without prompts, atomic save-and-continue, direct rendered part picking and bilingual pose panels");
             CheckDirectCreationTools(workspace,session,Frame);
+            CheckCreationCameraInteraction(workspace,session,Frame);
         }
         finally { io.MouseDown[0] = false; io.DisplaySize = display; AccessTools.Method(viewport, "Deactivate").Invoke(null, [host]); ((IDisposable)host).Dispose(); if (Directory.Exists(root)) Directory.Delete(root,true); }
     }
@@ -425,7 +458,7 @@ internal static partial class DirectorImGuiProbe
             float before = ImGui.GetCursorScreenPos().Y, right = ImGui.GetCursorScreenPos().X + ImGui.GetContentRegionAvail().X;
             frameHeight = ImGui.GetFrameHeight();
             var draw = ImGui.GetWindowDrawList(); int first = draw.VtxBuffer.Size;
-            method.Invoke(workspace, [label, value, (Action<CreationVector>)(v => value = v), 1f, null]);
+            method.Invoke(workspace, [label, value, (Action<CreationVector>)(v => value = v), 1f, null, false]);
             if (ImGui.GetCursorScreenPos().Y - before > frameHeight + 16)
                 throw new Exception($"Creation transform label and XYZ do not fit in a single row at {width}: height={ImGui.GetCursorScreenPos().Y - before}, frame={frameHeight}");
             for (int axis = 0; axis < 3; axis++)

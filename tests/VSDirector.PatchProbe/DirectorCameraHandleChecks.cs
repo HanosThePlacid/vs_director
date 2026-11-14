@@ -1,4 +1,4 @@
-using System.Collections;
+﻿using System.Collections;
 using System.Numerics;
 using System.Reflection;
 using System.Runtime.CompilerServices;
@@ -348,15 +348,14 @@ internal static partial class DirectorImGuiProbe
                 keys[(int)GlKeys.LControl] = snap;
                 var original = new CameraPreset { X = worldX };
                 Vector3 offset = normal == 0 ? new(0, .75f, .5f) : normal == 1 ? new(.75f, 0, .5f) : new(.75f, .5f, 0);
-                object?[] pointerArgs = [new Vec3d(worldX, 0, 0), new Vec3d(worldX + offset.X, offset.Y, offset.Z), null];
-                if (!(bool)Call("ProjectCameraHandlePoint", pointerArgs)!) throw new Exception("Plane pointer was clipped.");
-                Vector2 pointer = (Vector2)pointerArgs[2]!;
+                Vector2 pointer = Project(new Vec3d(worldX + offset.X, offset.Y, offset.Z));
                 var clip = new DirectorReplayViewportClip { Id = Guid.NewGuid(), CameraPose = original.DeepClone() };
                 Set("cameraTool", Mode(mode)); Set("cameraToolSelection", clip.Id);
                 Set("cameraDragOriginal", original); Set("cameraDragPose", original.DeepClone());
                 Set("cameraDragTimeline", new DirectorReplayViewportTimeline { Clips = [clip] });
                 Set("cameraDragAxisIndex", normal + 3); Set("cameraDragAxis", normal == 0 ? Vector3.UnitX : normal == 1 ? Vector3.UnitY : Vector3.UnitZ);
-                Set("cameraDragPlanePoint", Vector3.Zero);
+                Set("cameraTranslationDrag", Call("BeginCameraTranslationDrag", new Vec3d(worldX,0,0),
+                    normal == 0 ? Vector3.UnitX : normal == 1 ? Vector3.UnitY : Vector3.UnitZ, true, Project(new Vec3d(worldX,0,0))));
                 if (!(bool)Call("MoveCameraToolDrag", (int)Math.Round(pointer.X), (int)Math.Round(pointer.Y))!)
                     throw new Exception("Plane drag was not consumed.");
                 var result = clip.CameraPose!;
@@ -367,6 +366,41 @@ internal static partial class DirectorImGuiProbe
                     || mode == "Pivot" && (result.X != original.X || result.Y != original.Y || result.Z != original.Z))
                     throw new Exception($"Plane drag changed the wrong coordinates: {mode}/{normal}/snap={snap}, {moved}.");
             }
+            foreach(var eye in new[]{new Vector3(3,2,4),new Vector3(-3,1,-4),new Vector3(.4f,4,1)})
+            foreach(int dimension in new[]{0,3})
+            foreach(bool snap in new[]{false,true})
+            foreach(string mode in new[]{"Move","Pivot"})
+            for(int axis=0;axis<3;axis++)
+            {
+                const double worldX=30000000.125;
+                Configure(eye,worldX,width:720,height:520,x:120,y:55);
+                double worldY=dimension*32768d+5;
+                view[12]-=view[4]*worldY;view[13]-=view[5]*worldY;view[14]-=view[6]*worldY;
+                var original=new CameraPreset{X=worldX+.8,Y=5,Z=.6,Dimension=dimension,EditorPivotOffsetX=.2,EditorPivotOffsetY=-.1,EditorPivotOffsetZ=.3};
+                var pivot=(Vec3d)Call("CameraPivot",original)!;
+                var direction=axis==0?Vector3.UnitX:axis==1?Vector3.UnitY:Vector3.UnitZ;
+                Vector2 Along(float amount)=>Project(new(pivot.X+direction.X*amount,pivot.Y+direction.Y*amount,pivot.Z+direction.Z*amount));
+                var constraint=Call("BeginCameraTranslationDrag",pivot,direction,false,Along(.2f));
+                if(constraint is null)throw new Exception("Replay axis constraint rejected a usable projected world axis");
+                var clip=new DirectorReplayViewportClip{Id=Guid.NewGuid(),CameraPose=original.DeepClone()};
+                Set("cameraTool",Mode(mode));Set("cameraToolSelection",clip.Id);Set("cameraDragOriginal",original);Set("cameraDragPose",original.DeepClone());
+                Set("cameraDragTimeline",new DirectorReplayViewportTimeline{Clips=[clip]});Set("cameraDragAxisIndex",axis);Set("cameraDragAxis",direction);
+                Set("cameraTranslationDrag",constraint);keys[(int)GlKeys.LControl]=snap;
+                var pointer=Along(.7f);
+                Call("MoveCameraToolDrag",(int)Math.Round(pointer.X),(int)Math.Round(pointer.Y));
+                var result=clip.CameraPose!;
+                Vector3 moved=mode=="Move"?new((float)(result.X-original.X),(float)(result.Y-original.Y),(float)(result.Z-original.Z))
+                    :new((float)(result.EditorPivotOffsetX-original.EditorPivotOffsetX),(float)(result.EditorPivotOffsetY-original.EditorPivotOffsetY),(float)(result.EditorPivotOffsetZ-original.EditorPivotOffsetZ));
+                if(Vector3.Distance(moved,direction*.5f)>(snap?.0001f:.04f)||Vector3.Cross(moved,direction).Length()>.00001f||result.Dimension!=dimension)
+                    throw new Exception($"Replay world-axis drag drifted: {mode}/{axis}/dimension={dimension}/snap={snap}: {moved}");
+                Clear();ImGui.NewFrame();Call("DrawCameraHandles",ImGui.GetForegroundDrawList(),original);ImGui.Render();
+                var shaft=lines.Cast<object>().First(line=>(int)AccessTools.Property(line.GetType(),"Axis").GetValue(line)! ==axis);
+                var a=(Vector2)AccessTools.Property(shaft.GetType(),"A").GetValue(shaft)!;
+                var b=(Vector2)AccessTools.Property(shaft.GetType(),"B").GetValue(shaft)!;
+                var drawn=Vector2.Normalize(b-a);var expected=Vector2.Normalize(Along(.01f)-Along(0));
+                if(Vector2.Dot(drawn,expected)<.999f)throw new Exception("Replay handle projection does not follow its world axis away from screen centre");
+            }
+            Console.WriteLine("PASS replay XYZ move/pivot pointer drags and projected shafts in off-centre fitted viewports, multiple views, large coordinates/dimensions and snapping");
             keys[(int)GlKeys.LControl] = false;
             Set("cameraDragOriginal", null); Set("cameraDragPose", null); Set("cameraDragAxisIndex", -1);
             ImGui.NewFrame();

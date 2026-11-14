@@ -102,6 +102,31 @@ public sealed partial class VSDirectorModSystem
         if (!EnsureOffscreenRenderer(out string error)) throw new InvalidOperationException(error);
         return offscreenRenderer!;
     }
+    internal void ZoomCreationView(double delta, Guid actor = default)
+    {
+        if (creation is not { Enabled: true } runtime || runtime.Exporting || runtime.PerformanceActive
+            || capi is null || !DirectorWorkspaceViewportRuntime.ContainsPhysicalGamePoint(capi.Input.MouseX, capi.Input.MouseY)
+            || controller?.IsFreeCamera != true) return;
+        var session = runtime.Session;
+        CreationVector? target = null;
+        if (session.Project is { } project && session.Frame?.Objects.GetValueOrDefault(actor == Guid.Empty ? session.SelectedObject : actor) is { } state
+            && controller.CurrentPose?.Dimension == project.Dimension)
+        {
+            var center = state.Source.ActorSource is null ? System.Numerics.Vector3.Zero : new System.Numerics.Vector3(0, .9f, 0);
+            target = project.Origin + CreationVector.From(System.Numerics.Vector3.Transform(center, state.World));
+        }
+        controller.ZoomFreeCamera(delta, target);
+    }
+    internal bool CanOrbitCreationView(int x, int y) => creation is { Enabled: true, Exporting: false, PerformanceActive: false }
+        && controller?.IsFreeCamera == true && DirectorWorkspaceViewportRuntime.ContainsPhysicalGamePoint(x,y);
+    internal void OrbitCreationActor(Guid actor, float dx, float dy)
+    {
+        if (creation is not { Enabled: true, Exporting: false, PerformanceActive: false } runtime
+            || runtime.Session.Project is not { } project || runtime.Session.Frame?.Objects.GetValueOrDefault(actor) is not { } state
+            || controller?.CurrentPose?.Dimension != project.Dimension) return;
+        var center = System.Numerics.Vector3.Transform(new System.Numerics.Vector3(0,.9f,0),state.World);
+        controller.OrbitFreeCamera(project.Origin+CreationVector.From(center),dx,dy);
+    }
     internal void SeekCreationBackground(double time, bool advancing = false)
     {
         if (replay is null) return;

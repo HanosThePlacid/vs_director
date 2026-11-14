@@ -49,11 +49,19 @@ public static class DirectorCreationIk
         foreach (var upper in model.Parts)
         {
             string name = Name(upper.Name);
-            if (!name.Contains("arm") && !name.Contains("leg") && !name.Contains("foot")) continue;
+            bool mapped=model.BodyMapping.Any(p=>p.Value==upper.Id&&p.Key is "leftarm" or "rightarm" or "leftleg" or "rightleg");
+            if (!mapped && !name.Contains("arm") && !name.Contains("leg") && !name.Contains("foot")) continue;
             string lowerName = name.Contains("upper") ? name.Replace("upper", "lower")
                 : name.EndsWith("up") ? name[..^2] + "low" : "";
             var lower = model.Parts.FirstOrDefault(p => p.ParentId == upper.Id && Name(p.Name) == lowerName);
-            if (lower is not null) yield return (upper, lower);
+            if(lower is null && (mapped||name.Contains("upper")||name.EndsWith("up")))
+            {
+                // Ambiguous clothing/attachment branches are not anatomical chains.
+                var candidates=model.Parts.Where(p=>p.ParentId==upper.Id&&p.Origin!=upper.Origin)
+                    .Where(p=>{var n=Name(p.Name);return n.Contains("forearm")||n.Contains("lowerarm")||n.Contains("lowerleg")||n.Contains("lowerfoot")||n.Contains("shin");}).ToArray();
+                if(candidates.Length==1)lower=candidates[0];
+            }
+            if (lower is not null && lower.Origin!=upper.Origin) yield return (upper, lower);
         }
     }
     public static (Vector3 Joint, Vector3 End) Solve(Vector3 root, Vector3 target, Vector3 pole, float upper, float lower)

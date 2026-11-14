@@ -1,4 +1,4 @@
-using static VSDirector.Gui.DirectorCreationText;
+﻿using static VSDirector.Gui.DirectorCreationText;
 using System.Numerics;
 using System.Text.Json;
 using System.Text.Json.Nodes;
@@ -33,17 +33,18 @@ internal sealed partial class DirectorCreationWorkspace
     private long displayedGeneration;
     private bool revealPanels;
     internal DirectorCreationWorkspace(ICoreClientAPI api, VSDirectorModSystem owner, DirectorImGuiWorkspace host)
-    { this.api = api; this.owner = owner; this.host = host; try { editorPreferences=api.LoadModConfig<EditorPreferences>("vsdirector-creation-editor.json")??new(); } catch { editorPreferences=new(); } RestoreEditorPreferences(); }
+    { this.api = api; this.owner = owner; this.host = host; host.AppearanceOverlay=DrawAppearanceOverlay; try { editorPreferences=api.LoadModConfig<EditorPreferences>("vsdirector-creation-editor.json")??new(); } catch { editorPreferences=new(); } RestoreEditorPreferences(); }
     internal void Menu(string menu) { Enter(); requestedMenu = menu; }
-    internal void Suspend() { if (Active) { Runtime.Suspend(force: true); owner.LeaveCreationMode(); Active = false; host.SetCreationMode(false); } host.CreationPreviewVisible = false; }
+    internal void Suspend() { ClearActorPickerPreviews(); particlePreviews.Clear(); if (Active) { Runtime.Suspend(force: true); owner.LeaveCreationMode(); Active = false; host.SetCreationMode(false); } host.CreationPreviewVisible = false; }
     internal void Draw()
     {
         if (!Active) return;
         DrawToolbar(); DrawPendingTransition();
         if (!Active) return;
-        DrawAuxiliary();
+        DrawAuxiliary();DrawPreferences();
+        if (auxiliary is "actors" or "particles") { host.CreationPreviewVisible = false; DrawModal(); return; }
         if (requestedMenu.Length > 0) { ImGui.OpenPopup("creation-" + requestedMenu); requestedMenu = ""; }
-        foreach (string menu in new[] { "创作", "项目", "编辑", "创建", "模型", "动画", "窗口" })
+        foreach (string menu in new[] { "创作", "项目", "编辑", "创建", "模型", "动画", "窗口", "设置" })
         {
             ConstrainMenu();
             if (menuAnchor is { } anchor) ImGui.SetNextWindowPos(anchor, ImGuiCond.Appearing);
@@ -95,6 +96,8 @@ internal sealed partial class DirectorCreationWorkspace
         if (browser) Panel(L("creation-objects") + "###vsdirector-creation-browser", ref browser, host.LeftDockId, DrawBrowser, revealPanels);
         if (view) Panel(L("creation-view") + "###vsdirector-creation-view", ref view, host.InspectorDockId, DrawView);
         if (properties) Panel(modelContext.Length > 0 ? L("creation-model-properties") + "###vsdirector-creation-properties" : L("creation-creation-properties") + "###vsdirector-creation-properties", ref properties, host.InspectorDockId, DrawProperties, revealPanels);
+        if (particlesPanel) Panel(L("creation-particle-editor")+"###vsdirector-creation-particles",ref particlesPanel,host.InspectorDockId,DrawParticlePanel,focusParticles);
+        focusParticles=false;
         if (modelContext.Length == 0)
         {
             if (bonesPanel) Panel(L("creation-bones-tab") + "###vsdirector-creation-bones", ref bonesPanel, host.InspectorDockId, DrawBonesPanel, focusRigPanel == "bones");
@@ -110,7 +113,7 @@ internal sealed partial class DirectorCreationWorkspace
         host.CreationAspect = Project.Output.Width / (float)Math.Max(1, Project.Output.Height);
         host.CreationPreviewVisible = Runtime.Preview;
         if (Runtime.Preview) DrawPreview();
-        if (!ImGui.GetIO().WantTextInput && !ImGui.IsAnyItemActive() && !ImGui.IsPopupOpen("",ImGuiPopupFlags.AnyPopupId|ImGuiPopupFlags.AnyPopupLevel) && ImGui.IsWindowFocused(ImGuiFocusedFlags.AnyWindow) && !Runtime.Exporting && !Runtime.PerformanceActive)
+        if (!Runtime.NativeAppearanceEditorOpen && !ImGui.GetIO().WantTextInput && !ImGui.IsAnyItemActive() && !ImGui.IsPopupOpen("",ImGuiPopupFlags.AnyPopupId|ImGuiPopupFlags.AnyPopupLevel) && ImGui.IsWindowFocused(ImGuiFocusedFlags.AnyWindow) && !Runtime.Exporting && !Runtime.PerformanceActive)
         {
             HandleSelectionKeys();
             var io = ImGui.GetIO();
@@ -151,6 +154,16 @@ internal sealed partial class DirectorCreationWorkspace
             return;
         }
         bool ready = Project is not null && Runtime.ProjectWorldMatches;
+        if(menu=="设置")
+        {
+            Item(L("creation-preferences"),()=>OpenPreferences(0));
+            Item(L("creation-new-defaults"),()=>OpenPreferences(4));
+            Item(L("creation-project-settings"),()=>auxiliary="settings",ready);
+            Item(L("creation-export-menu"),()=>auxiliary="output",ready);
+            Item(L("creation-world-settings"),()=>view=true,ready);
+            ImGui.Separator();Item(L("creation-global-settings"),owner.OpenCreationGlobalSettings);
+            return;
+        }
         if (menu is "创作" or "项目")
         {
             Item(L("creation-new-project-16"), () => { name = L("creation-new-project"); Ask(L("creation-new-project-16"), value => Runtime.New(value)); });
@@ -188,14 +201,14 @@ internal sealed partial class DirectorCreationWorkspace
         }
         if (menu == "创建")
         {
-            Item(L("creation-native-actors"), () => auxiliary = "actors");
+            Item(L("creation-native-actors"), OpenActorPicker);
             Item(L("creation-cube-actor"), AddCubeActor); Item(L("creation-camera"), () => AddObject(CreationObjectKind.Camera));
             Item(L("creation-group-empty-object"), () => AddObject(CreationObjectKind.Group));
             Item(L("creation-item-block"), () => AddObject(CreationObjectKind.Item));
             Item(L("creation-capture-scene-structure"), BeginStructureCapture);
             Item(L("creation-3d-text"), () => AddObject(CreationObjectKind.Text));
             Item(L("creation-image"), () => FileDialog(L("creation-import-image"), p => { var a = ImportAsset(p, CreationAssetKind.Image); AddObject(CreationObjectKind.Image, a.Id); }));
-            Item(L("creation-game-particles"), () => AddObject(CreationObjectKind.Particle));
+            Item(L("creation-game-particles"), OpenParticlePicker);
             Item(L("creation-add-actor-from-existing-model"), () => auxiliary = "resources");
         }
         if (menu == "模型")
@@ -229,6 +242,7 @@ internal sealed partial class DirectorCreationWorkspace
             }
             Item(L("creation-tools"), () => toolsPanel = !toolsPanel, selected: toolsPanel);
             Item(L("creation-view"), () => view = true, selected: view);
+            Item(L("creation-particle-editor"),()=>{particlesPanel=true;focusParticles=true;},selected:particlesPanel);
             Item(L("creation-bones-tab"), () => { bonesPanel = true; focusRigPanel = "bones"; }, selected: bonesPanel);
             Item("IK", () => { ikPanel = true; focusRigPanel = "ik"; }, selected: ikPanel);
             Item(L("creation-actions-tab"), () => { actionsPanel = true; focusRigPanel = "actions"; }, selected: actionsPanel);
@@ -249,6 +263,7 @@ internal sealed partial class DirectorCreationWorkspace
     private void Select(CreationSceneObject obj)
     { Continue(() => { if(Session.ScenePoseEditing) Session.EndScenePose(); if (SelectedAnimation is not null && Session.AnimationObject != obj.Id && !Session.IsAnimationControl(obj.Id)) Session.LeaveAnimation(); selectedObjects.Clear(); selectedObjects.Add(obj.Id); selectedBones.Clear();selectionArea=SelectionArea.Objects;Session.SelectedObject = obj.Id; Session.SelectedPart = Guid.Empty; modelId = obj.ModelId; modelContext = ""; clipId = keyId = trackId = Guid.Empty; RevealTimelineSelection(obj.Id,Guid.Empty);
         wholeObjectSelection=true;RestoreTool(false);
+        if(obj.Kind==CreationObjectKind.Particle){particlesPanel=true;focusParticles=true;}
         if (IsIkControl(obj.Id)) { ChooseTool(CreationTool.Move); if(ikPanel) focusRigPanel = "ik"; } }); }
     private void SelectBone(Guid actor, Guid part) => SelectWithinPose(actor, () =>
     {
@@ -267,6 +282,7 @@ internal sealed partial class DirectorCreationWorkspace
     private void AddObject(CreationObjectKind kind, Guid asset = default)
     {
         var obj = new CreationSceneObject { Kind = kind, AssetId = asset, ResourceCode = kind == CreationObjectKind.Item ? "game:torch" : "", Name = kind switch { CreationObjectKind.Camera => L("creation-camera"), CreationObjectKind.Group => L("creation-group"), CreationObjectKind.Text => L("creation-text"), CreationObjectKind.Particle => L("creation-particles"), CreationObjectKind.Item => L("creation-item-block"), _ => L("creation-image") }, Transform = new() { Position = Runtime.CursorPosition() } };
+        if(kind==CreationObjectKind.Particle){obj.ParticleStart=Session.Time;obj.ParticleEffect=new(){Name=obj.Name};}
         Session.Edit(L("creation-create-5") + obj.Name, p => { p.Objects.Add(obj); if (kind == CreationObjectKind.Camera && p.CameraId == Guid.Empty) p.CameraId = obj.Id; }); Select(obj);
         if (kind == CreationObjectKind.Camera) Runtime.CaptureCamera(obj);
     }
@@ -410,10 +426,10 @@ internal sealed partial class DirectorCreationWorkspace
         void Children(Guid parent, int depth, bool attachments = false)
         {
             if (depth > 64) return;
-            foreach (var obj in Project.Objects.Where(o => o.ParentId == parent && !IsIkControl(o.Id) && (parent==Guid.Empty || attachments == (o.ActorHand is 1 or 2))).ToArray())
+            foreach (var obj in Project.Objects.Where(o => o.ParentId == parent && !IsIkControl(o.Id) && ShowAttachment(o) && (parent==Guid.Empty || attachments == (o.ActorHand is 1 or 2))).ToArray())
             {
                 if (search.Length > 0 && !Match(ObjectName(obj))) continue;
-                bool hasChildren = Project.Objects.Any(o => o.ParentId == obj.Id) || PosePicking && Project.Models.Any(m => m.Id == obj.ModelId && m.Parts.Count > 0);
+                bool hasChildren = Project.Objects.Any(o => o.ParentId == obj.Id && ShowAttachment(o)) || PosePicking && Project.Models.Any(m => m.Id == obj.ModelId && m.Parts.Count > 0);
                 var flags = ImGuiTreeNodeFlags.OpenOnArrow | ImGuiTreeNodeFlags.SpanAvailWidth | (ObjectSelected(obj.Id) ? ImGuiTreeNodeFlags.Selected : 0)
                     | (hasChildren ? 0 : ImGuiTreeNodeFlags.Leaf);
                 ImGui.PushID(obj.Id.ToString());
@@ -428,7 +444,7 @@ internal sealed partial class DirectorCreationWorkspace
                 {
                     if (PosePicking && Project.Models.Find(m => m.Id == obj.ModelId) is { } m) DrawParts(m, obj.Id);
                     Children(obj.Id, depth + 1);
-                    if(Project.Objects.Any(o=>o.ParentId==obj.Id&&o.ActorHand is 1 or 2) && ImGui.TreeNode(L("creation-attachments"))) { Children(obj.Id,depth+1,true);ImGui.TreePop(); }
+                    if(Project.Objects.Any(o=>o.ParentId==obj.Id&&o.ActorHand is 1 or 2&&ShowAttachment(o)) && ImGui.TreeNode(L("creation-attachments"))) { Children(obj.Id,depth+1,true);ImGui.TreePop(); }
                     ImGui.TreePop();
                 }
                 ImGui.PopID();
@@ -436,12 +452,6 @@ internal sealed partial class DirectorCreationWorkspace
         }
         if (modelContext.Length > 0 && CurrentModel is { } editingModel) DrawParts(editingModel, Session.SelectedObject);
         else Children(Guid.Empty, 0);
-        if (Project.Objects.Count == 1)
-        {
-            Hint(L("creation-new-guide"));
-            if (Button(L("creation-cube-actor"))) Continue(AddCubeActor);
-            if (Button(L("creation-import-shape-model"))) FileDialog(L("creation-import-shape-model"), ImportModel);
-        }
     }
     private void DrawObjectContext(CreationSceneObject obj)
     {
@@ -527,10 +537,22 @@ internal sealed partial class DirectorCreationWorkspace
     }
     private IReadOnlyList<CreationProjectEntry> projectEntries = Array.Empty<CreationProjectEntry>();
     private DateTime projectListAt;
+    private Task<IReadOnlyList<CreationProjectEntry>>? projectListing;
     private void DrawProjects()
     {
         if (Button(L("creation-new-project-16"))) Ask(L("creation-new-project-16"), Runtime.New);
-        if (DateTime.UtcNow >= projectListAt) { projectEntries = Session.Store.List(); projectListAt = DateTime.UtcNow.AddSeconds(2); }
+        if(projectListing is {IsCompleted:true} completed)
+        {
+            projectListing=null;
+            try {projectEntries=completed.GetAwaiter().GetResult();}
+            catch(Exception e){error=e.Message;}
+            projectListAt=DateTime.UtcNow.AddSeconds(2);
+        }
+        if(projectListing is null && DateTime.UtcNow>=projectListAt)
+        {
+            var store=Session.Store;
+            projectListing=Task.Run(store.List);
+        }
         bool Compatible(CreationProjectEntry entry) => Runtime.MatchesProjectWorld(entry.WorldId, entry.Dimension);
         var matching = projectEntries.Where(p => Match(p.Name + p.Folder)).ToArray();
         void OpenProject(CreationProjectEntry entry, bool recovery = false)
@@ -547,24 +569,6 @@ internal sealed partial class DirectorCreationWorkspace
             }
         }
         if (!matching.Any(Compatible)) ImGui.TextWrapped(L("creation-no-world-projects"));
-        var others = matching.Where(p => !Compatible(p)).ToArray();
-        // Deliberately closed: these are migration sources, not editable works
-        // belonging to the current world. Never open them through Selectable.
-        if (others.Length > 0 && ImGui.CollapsingHeader(L("creation-other-world-projects")))
-        {
-            ImGui.TextWrapped(L("creation-copy-world-help"));
-            foreach (var entry in others)
-            {
-                ImGui.PushID(entry.Id.ToString());
-                ImGui.TextWrapped((entry.Folder.Length > 0 ? entry.Folder + "/" : "") + entry.Name);
-                ImGui.TextWrapped(L("creation-project-world-details", entry.WorldId.Length == 0 ? L("creation-world-unbound") : entry.WorldId, entry.Dimension));
-                if (Button(L("creation-copy-to-current-world"))) Continue(() =>
-                { Runtime.DuplicateProject(entry.Id, toCurrentWorld: true); auxiliary = ""; projectListAt = default; });
-                if (entry.Recovery && Button(L("creation-copy-recovery-to-world"))) Continue(() =>
-                { Runtime.DuplicateProject(entry.Id, toCurrentWorld: true, recovery: true); auxiliary = ""; projectListAt = default; });
-                ImGui.PopID();
-            }
-        }
         if (error.Length > 0) ImGui.TextWrapped(error);
     }
     private void Ask(string title, Action<string> accept, string initial = "") { if (title == L("creation-animation-name")) { newActionDuration = 3; newActionLoop = false; } modalRequest = title; name = initial; acceptPath = accept; pathDialog = false; }

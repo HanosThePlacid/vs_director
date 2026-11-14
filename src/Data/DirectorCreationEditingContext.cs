@@ -51,6 +51,7 @@ public sealed partial class DirectorCreationSession
     }
     public void CancelGesture()
     {
+        poseOnlyGesture = false;
         if (gesture is not null) { Project = gesture; gesture = null; }
         if (clipGesture is not null && Project is not null)
         { int i = Project.Clips.FindIndex(c => c.Id == clipGesture.Id); if (i >= 0) Project.Clips[i] = clipGesture; Project.Duration = clipGestureDuration; Project.LoopEnd = clipGestureLoopEnd; clipGesture = null; }
@@ -71,8 +72,7 @@ public sealed partial class DirectorCreationSession
         if (ScenePoseEditing && Frame?.Objects.GetValueOrDefault(PoseActor)?.HasPerformance == true)
             throw new InvalidOperationException("Recorded performance owns this pose time.");
         var before = poseGesture ?? CapturePose();
-        if(before.Hidden.SetEquals(poseDraft.Hidden) && before.Bones.Count==poseDraft.Bones.Count
-            && before.Bones.All(p=>poseDraft.Bones.TryGetValue(p.Key,out var value)&&value==p.Value))
+        if (SamePose(before, poseDraft))
         { ResetPoseDraft();return; }
         if (ScenePoseEditing)
         {

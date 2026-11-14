@@ -25,6 +25,7 @@ internal static partial class DirectorImGuiProbe
         CheckCreationCalendar(assembly);
         CheckPerformanceEditing(assembly, api);
         DirectorActorEquipmentChecks.Run();
+        CheckActorDialog(assembly);
         CheckCreationWorldIsolation(assembly);
         string directory = Path.Combine(Path.GetTempPath(), "vsdirector-creation-probe-" + Guid.NewGuid().ToString("N"));
         var session = new DirectorCreationSession(new(directory));
@@ -41,6 +42,7 @@ internal static partial class DirectorImGuiProbe
         var objectRenderer = RuntimeHelpers.GetUninitializedObject(R("VSDirector.Rendering.DirectorCreationRenderer"));
         AccessTools.Field(runtime.GetType(), "api").SetValue(runtime, CreationScopeApi());
         AccessTools.Field(runtime.GetType(), "<Session>k__BackingField").SetValue(runtime, session);
+        AccessTools.Field(runtime.GetType(), "<ParticleOverrides>k__BackingField").SetValue(runtime, Activator.CreateInstance(R("VSDirector.Runtime.DirectorCreationParticleOverrides"),true));
         AccessTools.Field(runtime.GetType(), "<Renderer>k__BackingField").SetValue(runtime, objectRenderer);
         AccessTools.Field(runtime.GetType(), "<Status>k__BackingField").SetValue(runtime, "");
         AccessTools.Field(objectRenderer.GetType(), "<Error>k__BackingField").SetValue(objectRenderer, "");
@@ -53,6 +55,7 @@ internal static partial class DirectorImGuiProbe
         try
         {
             CheckCreationWorkflow(workspace,session);
+            CheckCreationPreferences(workspace,session);
             foreach (string language in new[] { "zh-cn", "en" })
             {
             LoadCreationProbeLanguage(language);
@@ -103,9 +106,10 @@ internal static partial class DirectorImGuiProbe
             var clip = new CreationClip { Name = "测试剪辑", Duration = 2 };
             project.Objects.Add(particle); project.Clips.Add(clip); session.Changed();
             foreach (float width in new[] { 220f, 320f, 520f })
-            foreach (string mode in new[] { "model", "particle", "clip", "key" })
+            foreach (string mode in new[] { "model", "particle", "advanced-particle", "clip", "key" })
             {
-                session.SelectedObject = mode == "particle" ? particle.Id : actor.Id;
+                particle.ParticleEffect=mode=="advanced-particle"?new():null;
+                session.SelectedObject = mode is "particle" or "advanced-particle" ? particle.Id : actor.Id;
                 session.SelectedPart = mode == "model" ? part.Id : Guid.Empty;
                 AccessTools.Field(workspace.GetType(), "clipId").SetValue(workspace, mode == "clip" ? clip.Id : Guid.Empty);
                 AccessTools.Field(workspace.GetType(), "trackId").SetValue(workspace, project.Tracks[0].Id);
@@ -114,7 +118,7 @@ internal static partial class DirectorImGuiProbe
                 {
                     ImGui.NewFrame(); ImGui.SetNextWindowPos(Vector2.Zero); ImGui.SetNextWindowSize(new(width, 600));
                     ImGui.Begin("creation-detail-probe", ImGuiWindowFlags.NoSavedSettings | ImGuiWindowFlags.NoResize);
-                    string method = mode == "model" ? "DrawModelProperties" : mode == "particle" ? "DrawObjectProperties" : "DrawTimeline";
+                    string method = mode == "model" ? "DrawModelProperties" : mode is "particle" or "advanced-particle" ? "DrawParticlePanel" : "DrawTimeline";
                     AccessTools.Method(workspace.GetType(), method).Invoke(workspace, null);
                     if (frame == 2 && ImGui.GetScrollMaxX() > 1) throw new Exception($"Creation {mode} overflowed at width {width}: {ImGui.GetScrollMaxX()}");
                     ImGui.End(); ImGui.Render();
@@ -124,6 +128,9 @@ internal static partial class DirectorImGuiProbe
             }
             }
             project.TimeDisplay = CreationTimeDisplay.Frames;
+            CheckAdvancedParticleParameters(workspace,session);
+            CheckParticlePicker(workspace,runtime,session,capture);
+            CheckFullscreenResourcePickers(workspace,runtime,session,capture);
             LoadCreationProbeLanguage("zh-cn");
             session.SelectedObject = actor.Id; session.SelectedPart = part.Id;
             AccessTools.Field(workspace.GetType(), "keyId").SetValue(workspace, Guid.Empty);
@@ -273,6 +280,37 @@ internal static partial class DirectorImGuiProbe
             AccessTools.Field(workspace.GetType(), "timelineEditor").SetValue(workspace, false);
             TimelineFrame();
             Console.WriteLine("PASS real clip first-click drag, undo/redo and right-click editor");
+            project=session.Project!;project.Clips.Clear();project.Objects.Clear();project.CameraId=Guid.Empty;
+            var particleBar=new CreationSceneObject{Kind=CreationObjectKind.Particle,ParticleEffect=new(),ParticleStart=1,ParticleDuration=2};
+            project.Objects.Add(particleBar);session.SelectedObject=particleBar.Id;session.SelectedPart=Guid.Empty;session.Changed();
+            AccessTools.Field(workspace.GetType(),"timelineZoom").SetValue(workspace,1d);
+            AccessTools.Field(workspace.GetType(),"timelineStart").SetValue(workspace,0d);
+            Vector2 ParticleBarPoint(int edge)
+            {
+                TimelineFrame();TimelineFrame();
+                var points=timelineRows.Where(v=>v.Color==0xff927c42).Select(v=>v.Position).ToArray();
+                if(points.Length==0)throw new Exception("Particle emission bar did not draw");
+                var lo=points.Aggregate(Vector2.Min);var hi=points.Aggregate(Vector2.Max);
+                return new(edge<0?lo.X+1:edge>0?hi.X-1:(lo.X+hi.X)/2,(lo.Y+hi.Y)/2);
+            }
+            foreach(int edge in new[]{-1,0,1})
+            {
+                particleBar=session.Project!.Objects.Single();particleBar.ParticleStart=1;particleBar.ParticleDuration=2;session.Changed();
+                io.MousePos=ParticleBarPoint(edge);TimelineFrame();TimelineFrame();io.MouseDown[0]=true;TimelineFrame();
+                if((Guid)AccessTools.Field(workspace.GetType(),"draggedParticle").GetValue(workspace)! != particleBar.Id)throw new Exception($"Particle bar click did not begin a gesture: edge={edge}, mouse={io.MousePos}, draft={session.HasTransformDraft}");
+                io.MousePos+=new Vector2(29,0);TimelineFrame();io.MouseDown[0]=false;TimelineFrame();
+                double start=particleBar.ParticleStart,length=particleBar.ParticleDuration;
+                if(edge<0&&Math.Abs(start+length-3)>1e-8||edge==0&&length!=2||edge>0&&start!=1
+                    ||(edge<=0?start<=1:length<=2)||Math.Abs(start*30-Math.Round(start*30))>1e-7||Math.Abs(length*30-Math.Round(length*30))>1e-7)
+                    throw new Exception("Particle emission drag changed the wrong boundary or ignored frame snapping: "+edge);
+                session.Undo();if(session.Project!.Objects.Single().ParticleStart!=1||session.Project.Objects.Single().ParticleDuration!=2)throw new Exception("Particle bar did not undo atomically");
+                session.Redo();if(session.Project!.Objects.Single().ParticleStart!=start||session.Project.Objects.Single().ParticleDuration!=length)throw new Exception("Particle bar redo failed");
+            }
+            particleBar=session.Project!.Objects.Single();double beforeCancel=particleBar.ParticleStart;
+            io.MousePos=ParticleBarPoint(0);TimelineFrame();TimelineFrame();io.MouseDown[0]=true;TimelineFrame();io.MousePos+=new Vector2(29,0);TimelineFrame();
+            AccessTools.Method(workspace.GetType(),"RequestEscape").Invoke(workspace,null);io.MouseDown[0]=false;TimelineFrame();
+            if(session.Project!.Objects.Single().ParticleStart!=beforeCancel||(Guid)AccessTools.Field(workspace.GetType(),"draggedParticle").GetValue(workspace)! != Guid.Empty)throw new Exception("Escape failed to cancel the particle timeline gesture");
+            Console.WriteLine("PASS particle emission bar body/left/right pointer drags, frame snapping, undo/redo and Escape cancellation");
         }
         finally { Lang.ChangeLanguage(locale); io.DisplaySize = display; ((IDisposable)host).Dispose(); if (Directory.Exists(directory)) Directory.Delete(directory, true); }
         CheckCreationProjectLifecycle(assembly, api, capture);
@@ -315,6 +353,7 @@ internal static partial class DirectorImGuiProbe
             var project = new DirectorCreationProject { Models = [imported.Model], Objects = [actor], Animations = imported.Animations };
             project.Validate();
             if (!DirectorCreationIk.SuggestChains(imported.Model).Any()) throw new Exception("Native limb discovery failed: " + relative);
+            if(relative.Contains("seraph")&&DirectorCreationIk.SuggestChains(imported.Model).Count()!=4)throw new Exception("Player posing must expose four limbs, not clothing and hand anchors");
             var rest = DirectorCreationEvaluator.Evaluate(project, 0).Objects[actor.Id];
             foreach (var pair in DirectorCreationIk.SuggestChains(imported.Model))
             {
@@ -739,6 +778,52 @@ internal static partial class DirectorImGuiProbe
         finally { GL.DeleteProgram(program); GL.DeleteShader(vertex); GL.DeleteShader(fragment); }
     }
 
+    private static void CheckAdvancedParticleParameters(object workspace,DirectorCreationSession session)
+    {
+        var original=session.Project!;
+        var obj=new CreationSceneObject{Kind=CreationObjectKind.Particle,ParticleEffect=new()};
+        var effect=obj.ParticleEffect;var first=effect.Emitters[0];first.Source="probe:one";first.Family="probe:family";first.Variant="probe:first";
+        var variant=CreationJson.Clone(first);variant.Id=Guid.NewGuid();variant.Source="probe:two";
+        var family=CreationJson.Clone(first);family.Id=Guid.NewGuid();family.Source="probe:three";family.Variant="probe:second";
+        effect.Emitters.AddRange([variant,family]);
+        foreach(var field in CreationParticleFields.All.Where(f=>f.Kind=="evolve"))first.Properties[field.Name]=field.Length==0?CreationParticleFields.Evolution("LINEAR",.3):new System.Text.Json.Nodes.JsonArray(Enumerable.Range(0,3).Select(_=>(System.Text.Json.Nodes.JsonNode)CreationParticleFields.Evolution("LINEAR",.3)).ToArray());
+        first.Properties["SecondaryParticles"]=new System.Text.Json.Nodes.JsonArray(CreationParticleFields.Defaults());
+        first.Properties["DeathParticles"]=new System.Text.Json.Nodes.JsonArray(CreationParticleFields.Defaults());
+        session.Open(new(){Objects=[obj]});session.SelectedObject=obj.Id;
+        var type=workspace.GetType();var scope=AccessTools.Field(type,"particleScope");
+        CreationParticleEffect Current()=>session.Project!.Objects[0].ParticleEffect!;
+        try
+        {
+            for(int mode=0;mode<3;mode++)
+            {
+                scope.SetValue(workspace,mode);
+                session.Edit("particle batch",_=>AccessTools.Method(type,"SetParticleNode").Invoke(workspace,[Current(),Current().Emitters[0],new[]{"Quantity","avg"},System.Text.Json.Nodes.JsonValue.Create(10+mode)]));
+                var expected=mode==0?new[]{10d,1,1}:mode==1?new[]{11d,11,1}:new[]{12d,12,12};
+                for(int i=0;i<3;i++)if(CreationParticleFields.Number((System.Text.Json.Nodes.JsonObject)CreationParticleFields.Find(Current().Emitters[i].Properties,"Quantity")!,"avg")!=expected[i])throw new Exception("Particle edit scope changed wrong emitters");
+                session.Undo();
+                if(Current().Emitters.Any(e=>CreationParticleFields.Number((System.Text.Json.Nodes.JsonObject)CreationParticleFields.Find(e.Properties,"Quantity")!,"avg")!=1))throw new Exception("Particle scope undo failed");
+                session.Redo();session.Undo();
+            }
+            foreach(string language in new[]{"zh-cn","en"})
+            foreach(float scale in new[]{1f,1.5f,2f})
+            foreach(float width in new[]{220f,320f,520f})
+            {
+                LoadCreationProbeLanguage(language);
+                for(int frame=0;frame<4;frame++)
+                {
+                    ImGui.NewFrame();ImGui.SetNextWindowPos(Vector2.Zero);ImGui.SetNextWindowSize(new(width*scale,600));
+                    ImGui.Begin("particle-parameter-probe",ImGuiWindowFlags.NoSavedSettings|ImGuiWindowFlags.NoResize);ImGui.SetWindowFontScale(scale);
+                    if(frame==1)ImGui.SetScrollY(ImGui.GetScrollMaxY()/2);if(frame==2)ImGui.SetScrollY(ImGui.GetScrollMaxY());
+                    AccessTools.Method(type,"DrawNativeParticleFields").Invoke(workspace,[Current(),Current().Emitters[0],Current().Emitters[0].Properties,Array.Empty<string>(),0]);
+                    if(frame==3&&ImGui.GetScrollMaxX()>1)throw new Exception($"Native particle fields overflow: {language} width {width} scale {scale}: {ImGui.GetScrollMaxX()}");
+                    ImGui.SetWindowFontScale(1);ImGui.End();ImGui.Render();
+                }
+            }
+            Console.WriteLine("PASS advanced particle scope edits/undo/redo and all native/nested parameter controls in Chinese/English at narrow widths and 100/150/200%");
+        }
+        finally{scope.SetValue(workspace,0);session.Open(original);}
+    }
+
     private static void CheckCreationGlowCoverage(int program)
     {
         int previousFramebuffer = GL.GetInteger(GetPName.FramebufferBinding);
@@ -789,6 +874,34 @@ internal static partial class DirectorImGuiProbe
                 }
             }
             Console.WriteLine("PASS real MRT framebuffer: nonemissive actors cover world bloom and respect darkness; explicit emission remains available");
+            GL.Uniform1(GL.GetUniformLocation(program,"glow"),0f);
+            GL.Uniform1(GL.GetUniformLocation(program,"particleMask"),1);
+            GL.ReadBuffer(ReadBufferMode.ColorAttachment0);
+            float SampleParticle(float u,float v,float alpha)
+            {
+                GL.VertexAttrib2(1,u,v);GL.ClearColor(0,0,0,0);GL.Clear(ClearBufferMask.ColorBufferBit);
+                GL.Uniform4(GL.GetUniformLocation(program,"tint"),1f,1f,1f,alpha);
+                GL.DrawArrays(PrimitiveType.Triangles,0,3);
+                GL.ReadPixels(8,8,1,1,PixelFormat.Rgba,PixelType.Float,pixel);return pixel[0];
+            }
+            float center=SampleParticle(.5f,.5f,1),edge=SampleParticle(.75f,.5f,1),corner=SampleParticle(0,0,1),faded=SampleParticle(.5f,.5f,.25f);
+            if(Math.Abs(center-.2f)>.01||Math.Abs(edge-.1f)>.01||corner>.001||Math.Abs(faded-.05f)>.01)
+                throw new Exception("Particle mask did not remove square corners or respect lifetime fade");
+            Console.WriteLine("PASS actual particle shader: soft edges, transparent corners, lifetime alpha and world lighting");
+            if(GL.GetAttribLocation(program,"particleLightIn")!=3)throw new Exception("Advanced particle light attribute does not match the mesh layout");
+            GL.Uniform1(GL.GetUniformLocation(program,"vertexColorMode"),1);
+            GL.VertexAttrib4(2,.25f,.5f,1f,.5f);GL.VertexAttrib3(3,.4f,.2f,.1f);
+            if(Math.Abs(SampleParticle(.5f,.5f,1)-.05f)>.002)throw new Exception("Advanced particle vertex color/alpha or per-particle light ignored");
+            GL.Uniform1(GL.GetUniformLocation(program,"glow"),.6f);
+            if(Math.Abs(SampleParticle(.5f,.5f,1)-.095f)>.002)throw new Exception("Advanced particle glow does not bypass local darkness");
+            GL.Uniform1(GL.GetUniformLocation(program,"glow"),0f);
+            GL.BlendFunc(BlendingFactor.SrcAlpha,BlendingFactor.One);
+            GL.ClearColor(.1f,.1f,.1f,1);GL.Clear(ClearBufferMask.ColorBufferBit);GL.DrawArrays(PrimitiveType.Triangles,0,3);
+            GL.ReadPixels(8,8,1,1,PixelFormat.Rgba,PixelType.Float,pixel);
+            if(Math.Abs(pixel[0]-.15f)>.002)throw new Exception("Advanced particle additive blend failed");
+            GL.Uniform1(GL.GetUniformLocation(program,"vertexColorMode"),0);
+            GL.BlendFunc(BlendingFactor.SrcAlpha,BlendingFactor.OneMinusSrcAlpha);
+            Console.WriteLine("PASS advanced particle vertex RGBA, per-particle lighting, glow and additive blending in real MRT framebuffer");
         }
         finally
         {

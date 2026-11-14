@@ -33,7 +33,7 @@ internal sealed partial class DirectorCreationWorkspace
             bool drag=!Session.HasTransformDraft;
             Continue(()=>
             {
-                Session.BeginScenePose(actor.Id);wholeObjectSelection=false;showBones=false;
+                Session.BeginScenePose(actor.Id);wholeObjectSelection=false;
                 trackId=clipId=Guid.Empty;poseEditorActor=Guid.Empty;actionPoseEditorTime=null;selectionArea=SelectionArea.Timeline;
                 if(hit is not null) { SelectTimelineKey(hit.Id,actor.PoseKeys.Select(k=>(k.Id,k.Time)),io.KeyCtrl,io.KeyShift);Session.Seek(hit.Time);if(ImGui.IsMouseDoubleClicked(ImGuiMouseButton.Left))OpenPoseEditor(actor,hit);else if(drag&&selectedTimelineKeys.Contains(hit.Id)) { scenePoseDrag=hit.Id;scenePoseOwner=actor.Id;scenePoseDrop=hit.Time;BeginKeyMove(); } }
                 else {keyId=Guid.Empty;selectedTimelineKeys.Clear();if(io.MousePos.X>=x0) Session.Seek(time(io.MousePos.X));}

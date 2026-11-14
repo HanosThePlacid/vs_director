@@ -16,6 +16,8 @@ internal sealed partial class DirectorCreationWorkspace
     private int poseRotationAxis=-1;
     private Vector2 poseDragTangent;
     private bool simplePoseDrag;
+    private DirectorCreationDrag? translationDrag;
+    private Vector3[] handleBasis = [];
     private Guid handleOwner,handlePart,handleAction;
     private bool ManipulateCreation(ImDrawListPtr draw,Matrix4x4 world,float[] view,float[] projection,Vector2 min,Vector2 size,bool camera,out Matrix4x4 result)
     {
@@ -37,11 +39,15 @@ internal sealed partial class DirectorCreationWorkspace
             if(Screen(Vector3.Transform(point,outlineWorld)) is { } at) pixels=Math.Max(pixels,Vector2.Distance(center,at)+18*DirectorImGuiTheme.Scale);
         bool interactive=ImGui.IsMouseHoveringRect(min,min+size)&&(!ImGui.IsWindowHovered(ImGuiHoveredFlags.AnyWindow)||ImGui.IsWindowHovered(ImGuiHoveredFlags.RootAndChildWindows));
         bool pose=Session.PoseEditing&&Session.SelectedPart!=Guid.Empty;
-        handleHover=creationHandles.Draw(draw,center,units,pixels*units,view.Select(x=>(double)x).ToArray(),axes,operation==OPERATION.ROTATE,operation==OPERATION.SCALE,handleAxis,interactive,handleHover,pose?poseRotationAxis:objectRotationAxis);
+        handleHover=creationHandles.Draw(draw,center,units,pixels*units,view.Select(x=>(double)x).ToArray(),axes,operation==OPERATION.ROTATE,operation==OPERATION.SCALE,handleAxis,interactive,handleHover,pose?poseRotationAxis:objectRotationAxis,
+            operation==OPERATION.ROTATE ? null : offset=>Screen(world.Translation+offset));
         if(handleAxis<0 && handleHover>=0 && ImGui.IsMouseClicked(ImGuiMouseButton.Left))
         {
             handleAxis=handleHover;handleStart=world;handlePointer=io.MousePos;handleCenter=center;handleUnits=units;
             handleRight=right;handleUp=up;handleView=eye;handleDirection=handleAxis==6?eye:axes[handleAxis%3];handleOperation=operation;
+            handleBasis=axes.ToArray();
+            translationDrag=operation==OPERATION.ROTATE?null:DirectorCreationDrag.Begin(v*p,min,size,io.MousePos,world.Translation,handleDirection,handleAxis>=3);
+            if(operation!=OPERATION.ROTATE && translationDrag is null) { handleAxis=-1; return false; }
             handleLastAngle=PointerAngle(io.MousePos);handleAngle=0;
             simplePoseDrag=pose&&operation==OPERATION.ROTATE&&handleAxis!=6;
             var radial=right*(io.MousePos.X-center.X)-up*(io.MousePos.Y-center.Y);
@@ -66,8 +72,8 @@ internal sealed partial class DirectorCreationWorkspace
         }
         else
         {
-            var projected=new Vector2(Vector3.Dot(handleDirection,handleRight),-Vector3.Dot(handleDirection,handleUp));
-            float amount=Vector2.Dot(delta,projected)/Math.Max(.0225f,projected.LengthSquared())*handleUnits;
+            if(translationDrag is null || !translationDrag.TryOffset(io.MousePos,out var offset)) return false;
+            float amount=Vector3.Dot(offset,handleDirection);
             if(handleOperation==OPERATION.SCALE)
             {
                 float factor=Math.Max(.01f,1+amount/(60*handleUnits*DirectorImGuiTheme.Scale));
@@ -75,15 +81,14 @@ internal sealed partial class DirectorCreationWorkspace
             }
             else
             {
-                Vector3 offset;
-                if(handleAxis<3) offset=handleDirection*amount;
-                else
-                {
-                    offset=(handleRight*delta.X-handleUp*delta.Y)*handleUnits;float denominator=Vector3.Dot(handleView,handleDirection);
-                    if(Math.Abs(denominator)>.0001) offset-=handleView*(Vector3.Dot(offset,handleDirection)/denominator);
-                }
                 if(io.KeyShift) offset*=.1f;
-                if(io.KeyCtrl) offset=new(MathF.Round(offset.X*10)/10,MathF.Round(offset.Y*10)/10,MathF.Round(offset.Z*10)/10);
+                if(io.KeyCtrl)
+                {
+                    var snapped=Vector3.Zero;
+                    for(int i=0;i<3;i++) if(handleAxis<3?i==handleAxis:i!=handleAxis-3)
+                        snapped+=handleBasis[i]*(MathF.Round(Vector3.Dot(offset,handleBasis[i])*10)/10);
+                    offset=snapped;
+                }
                 result=handleStart*Matrix4x4.CreateTranslation(offset);
             }
         }
@@ -109,8 +114,7 @@ internal sealed partial class DirectorCreationWorkspace
             bool inherited=false;var ancestor=state.Source.ParentId;
             for(int depth=0;ancestor!=Guid.Empty&&depth<128;depth++) { if(selected.Contains(ancestor)) { inherited=true;break; } ancestor=Project!.Objects.Find(o=>o.Id==ancestor)?.ParentId??Guid.Empty; }
             if(inherited) continue;
-            Matrix4x4 parent=Matrix4x4.Identity;
-            if(frame.Objects.TryGetValue(state.Source.ParentId,out var parentState)) { parent=parentState.World;if(parentState.Bones.TryGetValue(state.Source.ParentPartId,out var bone)) parent=bone*parent; }
+            Matrix4x4 parent=DirectorCreationParenting.Space(frame,state.Source);
             if(!Matrix4x4.Invert(parent,out var inverse)) throw new InvalidOperationException("Pose transform is singular.");
             var near=state.Transform;var tr=DirectorCreationMath.FromMatrix(state.World*delta*inverse,near.Rotation,near.Scale);tr.Pivot=near.Pivot;
             tr.Position-=near.Pivot-CreationVector.From(Vector3.TransformNormal(near.Pivot.Float(),Matrix4x4.CreateScale(tr.Scale.Float())*CreationTransform.RotationMatrix(tr.Rotation)));

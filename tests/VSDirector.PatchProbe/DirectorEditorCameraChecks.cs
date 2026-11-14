@@ -86,7 +86,42 @@ internal static partial class DirectorImGuiProbe
                     || Math.Abs(camera.Z - source.Z - after.Z) > .00001)
                     throw new Exception("Free-camera forward movement changed after an inverted shooting pose.");
             }
-            Console.WriteLine("PASS inverted/rolled shooting keyframes enter upright free look without changing view direction, position, dimension, FOV or source; first mouse/movement stable (rendered and active poses)");
+            foreach(float yaw in new[]{0f,90,180,270})
+            {
+                var source=new CameraPreset{X=30000000,Y=124,Z=-30000000,Yaw=yaw,Pitch=180,Fov=85,Dimension=2};
+                var forward=EntityPos.GetViewVector(source.Pitch*GameMath.DEG2RAD,source.Yaw*GameMath.DEG2RAD);
+                var target=new CreationVector(source.X+forward.X*10,source.Y+forward.Y*10,source.Z+forward.Z*10);
+                Set("activeCamera",source);Set("preparedCameraPose",source.DeepClone());Set("freeCameraActive",true);
+                if(Call("ZoomFreeCamera",1d,target) is not true)throw new Exception("World wheel failed to move free camera");
+                var moved=(CameraPreset)AccessTools.Field(type,"activeCamera").GetValue(controller)!;
+                double distance=Math.Sqrt(Math.Pow(moved.X-target.X,2)+Math.Pow(moved.Y-target.Y,2)+Math.Pow(moved.Z-target.Z,2));
+                if(Math.Abs(distance-10*Math.Exp(-.15))>.00001||moved.Fov!=85||moved.Yaw!=yaw||moved.Pitch!=180||moved.Dimension!=2
+                    ||source.X!=30000000||AccessTools.Field(type,"preparedCameraPose").GetValue(controller) is not null)
+                    throw new Exception("World zoom changed orientation/FOV/source or retained stale prepared pose");
+                Call("ZoomFreeCamera",-1d,target);
+                moved=(CameraPreset)AccessTools.Field(type,"activeCamera").GetValue(controller)!;
+                if(Math.Abs(moved.X-source.X)+Math.Abs(moved.Y-source.Y)+Math.Abs(moved.Z-source.Z)>.00001)throw new Exception("World zoom out did not restore distance");
+                for(int i=0;i<20;i++)Call("ZoomFreeCamera",10d,target);
+                moved=(CameraPreset)AccessTools.Field(type,"activeCamera").GetValue(controller)!;
+                distance=Math.Sqrt(Math.Pow(moved.X-target.X,2)+Math.Pow(moved.Y-target.Y,2)+Math.Pow(moved.Z-target.Z,2));
+                if(distance<.24999)throw new Exception("World zoom crossed the actor centre");
+                Set("freeCameraActive",false);
+                if(Call("ZoomFreeCamera",1d,target) is not false)throw new Exception("World wheel moved shooting camera");
+                Set("freeCameraActive",true);Set("externalInputLocked",true);
+                if(Call("ZoomFreeCamera",1d,target) is not false)throw new Exception("World wheel ignored external input lock");
+                Set("externalInputLocked",false);
+                Set("activeCamera",source.DeepClone());
+                if(Call("OrbitFreeCamera",target,40f,20f) is not true)throw new Exception("World actor orbit failed");
+                moved=(CameraPreset)AccessTools.Field(type,"activeCamera").GetValue(controller)!;
+                var look=EntityPos.GetViewVector(moved.Pitch*GameMath.DEG2RAD,moved.Yaw*GameMath.DEG2RAD);
+                distance=Math.Sqrt(Math.Pow(moved.X-target.X,2)+Math.Pow(moved.Y-target.Y,2)+Math.Pow(moved.Z-target.Z,2));
+                if(Math.Abs(distance-10)>.001||Math.Abs(moved.X+look.X*distance-target.X)+Math.Abs(moved.Y+look.Y*distance-target.Y)+Math.Abs(moved.Z+look.Z*distance-target.Z)>.001
+                    ||moved.Yaw==yaw||moved.Pitch==180||moved.Fov!=85||moved.Dimension!=2)throw new Exception("Actor orbit lost its target, radius or camera settings");
+                Call("OrbitFreeCamera",target,0f,10000f);
+                moved=(CameraPreset)AccessTools.Field(type,"activeCamera").GetValue(controller)!;
+                if(moved.Pitch>269.14f||moved.Roll!=0)throw new Exception("Actor orbit crossed its pitch limit");
+            }
+            Console.WriteLine("PASS upright free-camera handoff and world zoom: stable angles/FOV/dimension, reversible distance, near limit, shooting/input-lock isolation");
         }
         finally
         {

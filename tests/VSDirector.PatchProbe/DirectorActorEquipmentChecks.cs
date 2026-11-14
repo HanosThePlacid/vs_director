@@ -14,35 +14,18 @@ internal static class DirectorActorEquipmentChecks
         var assembly = typeof(VSDirectorModSystem).Assembly;
         var runtimeType = assembly.GetType("VSDirector.Runtime.DirectorCreationRuntime", true)!;
         void Check(bool value, string message) { if (!value) throw new Exception(message); }
+        var appearanceEntity=new Vintagestory.API.Common.EntityAgent();
+        appearanceEntity.World=ProbeDispatchProxy.Create<IWorldAccessor>((m,_)=>m.Name=="get_Side"?EnumAppSide.Client:ProbeDispatchProxy.DefaultValue(m.ReturnType));
+        AccessTools.Property(typeof(Vintagestory.API.Common.Entities.Entity),"Properties").SetValue(appearanceEntity,
+            new Vintagestory.API.Common.Entities.EntityProperties{Client=new Vintagestory.API.Common.Entities.EntityClientProperties([],null!)});
+        appearanceEntity.WatchedAttributes.SetString("voicetype","altoflute");
+        appearanceEntity.WatchedAttributes.SetString("voicepitch","high");
+        appearanceEntity.WatchedAttributes.SetString("characterClass","hunter");
+        var captured=TreeAttribute.CreateFromBytes((byte[])AccessTools.Method(runtimeType,"CaptureAppearanceData").Invoke(null,[appearanceEntity])!);
+        Check(captured.GetString("voicetype")=="altoflute" && captured.GetString("voicepitch")=="high" && captured.GetString("characterClass")=="hunter",
+            "Actor appearance lost native voice or class metadata");
         var item = new Item { ItemId = 42, Code = new AssetLocation("game:equipment-probe") };
         var stack = new ItemStack(item, 3); stack.Attributes.SetString("variant", "preserve-me");
-        var pickerType = assembly.GetType("VSDirector.Gui.DirectorActorItemDialog", true)!
-            .GetNestedType("PickerInventory", BindingFlags.NonPublic)!;
-        var inventory = (InventoryBase)Activator.CreateInstance(pickerType, BindingFlags.Instance | BindingFlags.NonPublic, null, new object?[] { null, 48 }, null)!;
-        inventory[0].Itemstack = stack;
-        var cursor = new DummySlot(new ItemStack(item, 8));
-        ItemStack? selected = null; int selections = 0;
-        AccessTools.Field(pickerType, "Pick").SetValue(inventory, (Action<ItemStack>)(s => { selected = s; selections++; }));
-        var op = new ItemStackMoveOperation(null!, EnumMouseButton.Left, 0, EnumMergePriority.AutoMerge, 1);
-        object packet = inventory.ActivateSlot(0, cursor, ref op);
-        Check(packet is null && op.MovedQuantity == 0 && cursor.StackSize == 8 && inventory[0].StackSize == 3,
-            "Actor picker moved live items or emitted an inventory packet");
-        Check(selected is not null && selected.Attributes.GetString("variant") == "preserve-me" && !ReferenceEquals(selected, stack),
-            "Actor picker lost stack attributes or returned a shared stack");
-        selected!.Attributes.SetString("variant", "changed");
-        Check(stack.Attributes.GetString("variant") == "preserve-me", "Actor selection mutated catalog data");
-        op.WheelDir = 1; inventory.ActivateSlot(0, cursor, ref op);
-        Check(selections == 1, "Scrolling a catalog item changed the actor equipment");
-        var gridType = assembly.GetType("VSDirector.Gui.DirectorActorItemDialog", true)!
-            .GetNestedType("PickerGrid", BindingFlags.NonPublic)!;
-        var grid = (GuiElementItemSlotGrid)RuntimeHelpers.GetUninitializedObject(gridType);
-        AccessTools.Field(typeof(GuiElementItemSlotGridBase), "inventory").SetValue(grid, inventory);
-        var api = ProbeDispatchProxy.Create<ICoreClientAPI>((method, _) => method.Name == "get_World" ? null
-            : throw new Exception("Catalog grid touched live API: " + method.Name));
-        grid.SlotClick(api, 0, EnumMouseButton.Left, true, true, false);
-        grid.OnMouseUp(api, null!);
-        Check(selections == 2 && cursor.StackSize == 8, "Catalog grid bypassed isolated selection");
-
         var baseTexture = new CompositeTexture(new AssetLocation("game:skin"))
         { Baked = new BakedCompositeTexture { TextureSubId = 17, BakedName = new AssetLocation("game:skin"), TextureFilenames = [new AssetLocation("game:skin")] } };
         baseTexture.Baked.BakedVariants = [baseTexture.Baked];
@@ -57,7 +40,7 @@ internal static class DirectorActorEquipmentChecks
             var session = new DirectorCreationSession(new(directory));
             var hand = new CreationPart { Name = "RightHand", Group = true };
             var model = new CreationModel { Parts = [hand] };
-            var skin = new TreeAttribute(); skin.SetString("skin", "chosen");
+            var skin = captured; skin.SetString("skin", "chosen");
             var actor = new CreationSceneObject { ModelId = model.Id, ActorSource = new() { EntityCode = "game:player", AppearanceData = skin.ToBytes() } };
             var other = new CreationSceneObject { ModelId = model.Id };
             var project = new DirectorCreationProject { Models = [model], Objects = [actor, other] };
@@ -85,6 +68,6 @@ internal static class DirectorActorEquipmentChecks
                 "Undo did not restore full item stack attributes");
         }
         finally { if (Directory.Exists(directory)) Directory.Delete(directory, true); }
-        Console.WriteLine("PASS actor-only catalog selection, scroll/cursor isolation, full-stack save/reopen/undo, hand clearing and private skin atlas metadata");
+        Console.WriteLine("PASS actor full-stack save/reopen/undo, hand clearing and private skin atlas metadata");
     }
 }

@@ -28,7 +28,7 @@ internal sealed partial class DirectorCreationWorkspace
     private void DrawRigDisplay()
     {
         Checkbox(L("creation-show-bones"), ref showBones);
-        if (showBones) Checkbox(L("creation-show-all-bones"), ref showAllBones);
+        if(Button(L("creation-pref-overlay")))OpenPreferences(1);
     }
     private void DrawBonesPanel()
     {
@@ -129,7 +129,7 @@ internal sealed partial class DirectorCreationWorkspace
         if (Session.PoseEditing)
         {
             if (Checkbox(L("creation-visible"), ref visible))
-            { Session.BeginGesture(); Session.SetProperty(actor.Id,bone.Id,CreationChannel.Visible,new(visible?1:0,0,0),()=>{}); Session.Changed(); Session.EndGesture(L("creation-visible")); }
+            { Session.BeginGesture(poseOnly: true); Session.SetProperty(actor.Id,bone.Id,CreationChannel.Visible,new(visible?1:0,0,0),()=>{}); Session.Changed(); Session.EndGesture(L("creation-visible")); }
         }
         else Toggle(L("creation-visible"), visible, v => Session.SetProperty(actor.Id, bone.Id, CreationChannel.Visible, new(v ? 1 : 0, 0, 0), () => { if (v) actor.HiddenParts.Remove(bone.Id); else actor.HiddenParts.Add(bone.Id); }));
         if (!Session.PoseEditing && Button(L("creation-bone-rest"))) Session.Edit(L("creation-bone-rest"), _ => Session.SetTransform(actor.Id, bone.Id, new()));
@@ -137,21 +137,38 @@ internal sealed partial class DirectorCreationWorkspace
     private void DrawIkPanel()
     {
         if (!RigContext(out var actor, out var model)) return;
-        DrawRigDisplay();
-        Hint(L("creation-ik-select-chain"));
+        if(Session.PoseEditing)Hint(L("creation-pose-handles-help"));
+        if(actor.IkChains.Count==0)
+        {
+            if(Button(L("creation-scene-pose")))StartScenePose(actor);
+            var candidates=PoseControlChains(model);
+            if(candidates.Length==0)Hint(L("creation-ik-no-auto-chain"));
+            else if(Button(L("creation-ik-auto-create")))Continue(()=>
+            {
+                if(Session.Frame?.Objects.GetValueOrDefault(actor.Id) is not {} state)return;
+                var controls=candidates.Select(pair=>DirectorCreationIk.CreateControls(actor,model,state,pair.Upper,pair.Lower)).ToArray();
+                Session.Edit(L("creation-ik-auto-create"),p=>{foreach(var c in controls){p.Objects.Add(c.Target);p.Objects.Add(c.Pole);actor.IkChains.Add(c.Chain);}});
+                selectedIkChain=controls[0].Chain.Id;
+                Select(controls[0].Target);
+            });
+        }
+        if(Button(L("creation-pref-overlay")))OpenPreferences(1);
         var active = ActiveIkChain(actor);
-        if (Combo(L("creation-ik-chain"), active?.Name ?? L("creation-none")))
+        if(actor.IkChains.Count>0 && ImGui.BeginListBox("##ik-chains",new(-1,Math.Min(140,30*actor.IkChains.Count)*DirectorImGuiTheme.Scale)))
         {
             foreach (var chain in actor.IkChains)
                 if (ImGui.Selectable(chain.Name + "##" + chain.Id, chain == active))
                 { selectedIkChain = chain.Id; Select(Project!.Objects.First(o => o.Id == chain.Target)); }
-            ImGui.EndCombo();
+            ImGui.EndListBox();
         }
         if (active is not null)
         {
+            string PartName(Guid id)=>model.Parts.Find(p=>p.Id==id) is {} part?BoneName(model,part):L("creation-none");
+            ImGui.TextWrapped(PartName(active.Upper)+" → "+PartName(active.Lower));
             Toggle(L("creation-enabled-chain"), active.Enabled, v => active.Enabled = v);
+            bool firstControl=true;
             foreach (var control in new[] { (active.Target, "creation-ik-target"), (active.Pole, "creation-ik-pole") })
-                if (ImGui.RadioButton(L(control.Item2), Session.SelectedObject == control.Item1)) Select(Project!.Objects.First(o => o.Id == control.Item1));
+                if (InlineChoice(L(control.Item2), Session.SelectedObject == control.Item1,ref firstControl)) Select(Project!.Objects.First(o => o.Id == control.Item1));
             if (Project!.Objects.Find(o => o.Id == Session.SelectedObject && (o.Id == active.Target || o.Id == active.Pole)) is { } selected)
             {
                 bool auto = Session.AutoKey; if (Checkbox(L("creation-auto-key"), ref auto)) Continue(() => Session.AutoKey = auto);
@@ -160,8 +177,8 @@ internal sealed partial class DirectorCreationWorkspace
             if (Header(L("creation-ik-advanced")))
             {
                 double weight = Session.Frame?.Objects.GetValueOrDefault(actor.Id)?.IkWeight ?? actor.IkWeight;
-                Number(L("creation-ik-weight"), weight, v => Session.SetProperty(actor.Id, Guid.Empty, CreationChannel.IkWeight, new(v,0,0), () => actor.IkWeight = v), 0, 1, .01f);
-                if (Button(L("creation-ik-weight-key"))) Session.Edit(L("creation-ik-weight-key"), _ => Session.WriteKey(actor.Id, Guid.Empty, CreationChannel.IkWeight, new(weight,0,0)));
+                Number(L("creation-ik-weight"), weight, v => Session.SetProperty(actor.Id, Guid.Empty, CreationChannel.IkWeight, new(v,0,0), () => actor.IkWeight = v), 0, 1, .01f,
+                    () => Session.Edit(L("creation-ik-weight-key"), _ => Session.WriteKey(actor.Id, Guid.Empty, CreationChannel.IkWeight, new(weight,0,0))));
                 VectorField(L("creation-ik-end"), active.EndOffset, v => active.EndOffset = v, .01f);
                 if (Button(L("creation-delete-ik-chain"))) Continue(() =>
                 {

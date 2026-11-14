@@ -31,7 +31,7 @@ internal sealed partial class DirectorCreationRenderer : IRenderer
         return meshes[key] = api.Render.UploadMesh(build());
     }
     internal bool Visible { get; set; } = true;
-    internal bool NativeParticlesActive { get; set; }
+    internal IReadOnlyList<CreationSimulatedParticle> AdvancedParticles { get; set; } = [];
     internal string Error { get; private set; } = "";
     public double RenderOrder => .69;
     public int RenderRange => 9999;
@@ -70,15 +70,19 @@ internal sealed partial class DirectorCreationRenderer : IRenderer
             shader.Uniform("fogMinimum", api.Render.FogMin);
             // Share the exact double-precision world-view basis with viewport
             // picking/gizmos, including native eye offsets and offscreen views.
-            shader.UniformMatrix("viewMatrix", DirectorCreationMath.ProjectView(game.PerspectiveViewMat, project.Origin, project.Dimension * (double)BlockPos.DimensionBoundary));
+            var view=DirectorCreationMath.ProjectView(game.PerspectiveViewMat, project.Origin, project.Dimension * (double)BlockPos.DimensionBoundary);
+            shader.UniformMatrix("viewMatrix", view);
             CreationVector origin = default;
-            var cameraLocal = new CreationVector(player.CameraPos.X, player.CameraPos.Y - project.Dimension * (double)BlockPos.DimensionBoundary, player.CameraPos.Z) - project.Origin;
+            Matrix4x4.Invert(new(view[0],view[1],view[2],view[3],view[4],view[5],view[6],view[7],view[8],view[9],view[10],view[11],view[12],view[13],view[14],view[15]),out var inverseView);
+            var cameraLocal = inverseView.Translation;
             // Far-to-near alpha blending; retain world occlusion without writing particle/plane depth.
             foreach (var state in frame.Objects.Values.Where(s => s.Visible)
                 .OrderBy(s => s.Source.Opacity < .999 || s.Source.Kind is CreationObjectKind.Image or CreationObjectKind.Text or CreationObjectKind.Particle)
-                .ThenByDescending(s => Vector3.DistanceSquared(s.World.Translation, cameraLocal.Float())))
+                .ThenByDescending(s => Vector3.DistanceSquared(s.World.Translation, cameraLocal)))
             {
                 var obj = state.Source;
+                shader.Uniform("particleMask", 0);
+                shader.Uniform("vertexColorMode", 0);
                 if (project.Visuals.World.ShowEntities == false && obj.Kind is CreationObjectKind.Model or CreationObjectKind.Item) continue;
                 if (!project.Visuals.World.ShowPlayers && obj.ActorSource?.EntityCode.Contains("player", StringComparison.OrdinalIgnoreCase) == true) continue;
                 if (!project.Visuals.Particles.ShowParticles && obj.Kind == CreationObjectKind.Particle) continue;
@@ -137,9 +141,10 @@ internal sealed partial class DirectorCreationRenderer : IRenderer
                 }
                 else if (obj.Kind == CreationObjectKind.Particle)
                 {
-                    RenderParticles(state, obj, origin);
+                    if(obj.ParticleEffect is null)RenderParticles(state, obj, origin);
                 }
             }
+            if(project.Visuals.Particles.ShowParticles)RenderAdvancedParticles(frame.Objects);
             revision = session.Revision; Error = "";
         }
         catch (Exception e) { Error = Message(e.Message); }
@@ -147,24 +152,46 @@ internal sealed partial class DirectorCreationRenderer : IRenderer
     }
     private void RenderParticles(CreationObjectState state, CreationSceneObject obj, CreationVector origin)
     {
-        if (NativeParticlesActive && obj.NativeParticles) return;
-        string key = "particle-plane";
-        if (!meshes.TryGetValue(key, out var mesh)) meshes[key] = mesh = api.Render.UploadMesh(Quad(
-            [new(-1, -1, 0), new(1, -1, 0), new(1, 1, 0), new(-1, 1, 0)], 0, 0, 1, 1, 0));
-        Matrix4x4 facing = Matrix4x4.Identity;
-        if (Matrix4x4.Invert(new Matrix4x4(game.MainCamera.CameraMatrixOriginf[0], game.MainCamera.CameraMatrixOriginf[1], game.MainCamera.CameraMatrixOriginf[2], 0,
-            game.MainCamera.CameraMatrixOriginf[4], game.MainCamera.CameraMatrixOriginf[5], game.MainCamera.CameraMatrixOriginf[6], 0,
-            game.MainCamera.CameraMatrixOriginf[8], game.MainCamera.CameraMatrixOriginf[9], game.MainCamera.CameraMatrixOriginf[10], 0, 0, 0, 0, 1), out var inv)) facing = inv;
-        shader!.Uniform("textured", 0);
-        foreach (var particle in DirectorCreationParticles.Sample(obj, session.Frame!.Time))
+        var settings = obj.ParticleSettings ?? CreationParticleSettings.Preset(obj.ResourceCode);
+        bool cube = settings.Shape == CreationParticleShape.Cube;
+        string key = cube ? "particle-cube" : "particle-plane";
+        if (!meshes.TryGetValue(key, out var mesh))
         {
-            Vector3 center = Vector3.Transform(particle.Position.Float(), state.World) + origin.Float();
-            Matrix4x4 world = Matrix4x4.CreateScale((float)particle.Size) * facing * Matrix4x4.CreateTranslation(center);
-            shader.Uniform("tint", (float)state.Color.X, (float)state.Color.Y, (float)state.Color.Z, (float)(obj.Opacity * particle.Alpha));
-            shader.Uniform("glow", (float)Math.Clamp(obj.Glow + 0.2, 0, 1));
+            var data = Quad([new(-.5f,-.5f,0),new(.5f,-.5f,0),new(.5f,.5f,0),new(-.5f,.5f,0)],0,0,1,1,0);
+            if(cube)
+            {
+                data = new MeshData(24,36,withNormals:false,withUv:true);
+                Vector3[] points = Enumerable.Range(0,8).Select(i=>new Vector3((i&1)==0?-.5f:.5f,(i&2)==0?-.5f:.5f,(i&4)==0?-.5f:.5f)).ToArray();
+                foreach(int[] face in new int[][] { [0,1,3,2],[4,6,7,5],[0,4,5,1],[2,3,7,6],[0,2,6,4],[1,5,7,3] })
+                    data.AddMeshData(Quad(face.Select(i=>points[i]).ToArray(),0,0,1,1,0));
+            }
+            meshes[key]=mesh=api.Render.UploadMesh(data);
+        }
+        // The active view is also replaced during offscreen renders. MainCamera's
+        // cached basis belongs to the editor and can turn preview quads edge-on.
+        var m=game.PerspectiveViewMat;
+        Matrix4x4.Invert(new((float)m[0],(float)m[1],(float)m[2],0,(float)m[4],(float)m[5],(float)m[6],0,
+            (float)m[8],(float)m[9],(float)m[10],0,0,0,0,1),out var facing);
+        Matrix4x4.Decompose(state.World,out var scale,out var rotation,out _);
+        scale=Vector3.Abs(scale);
+        BindTexture(session.Project!,settings.Texture);
+        shader!.Uniform("particleMask",settings.Shape==CreationParticleShape.SoftQuad?1:0);
+        shader.Uniform("surfaceShading",cube?1:0);
+        shader.Uniform("glow",(float)obj.Glow);
+        var particles=DirectorCreationParticles.Sample(obj,session.Frame!.Time)
+            .Select(p=>(Particle:p,Center:Vector3.Transform(p.Position.Float(),state.World)+origin.Float()))
+            .OrderBy(p=>m[2]*p.Center.X+m[6]*p.Center.Y+m[10]*p.Center.Z);
+        foreach (var (particle,center) in particles)
+        {
+            Matrix4x4 world = Matrix4x4.CreateScale(scale*(float)particle.Size)
+                * Matrix4x4.CreateRotationZ((float)(particle.Rotation*Math.PI/180))
+                * (cube?Matrix4x4.CreateFromQuaternion(rotation):facing) * Matrix4x4.CreateTranslation(center);
+            var color=state.Color*(1-particle.Progress)+settings.EndColor*particle.Progress;
+            shader.Uniform("tint", (float)color.X, (float)color.Y, (float)color.Z, (float)(obj.Opacity * particle.Alpha));
             shader.UniformMatrix("modelMatrix", Array(world));
             game.Platform.RenderMesh(mesh);
         }
+        shader.Uniform("particleMask",0);
     }
     private void RenderNativeObject(DirectorCreationProject project, CreationObjectState state, CreationSceneObject obj, CreationVector origin)
     {

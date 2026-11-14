@@ -34,17 +34,21 @@ internal static class CreationWorldScopeChecks
             string original = File.ReadAllText(Path.Combine(store.DirectoryFor(source.Id), "project.json"));
             var entry = store.List().Single();
             Check(entry.WorldId == "world-a" && entry.Dimension == 1, "Library lost world metadata");
-            var copy = store.CopyToWorld(source, "world-b", 0);
+            var copy = store.Duplicate(source);
             var reopened = store.Load(copy.Id);
-            Check(reopened.Id != source.Id && reopened.WorldId == "world-b" && reopened.Dimension == 0, "Copy retained old identity or binding");
+            Check(reopened.Id != source.Id && reopened.WorldId == source.WorldId && reopened.Dimension == source.Dimension, "Duplicate retained old identity or changed world binding");
             Check(reopened.Origin == source.Origin && reopened.Objects[0].Transform.Position == actor.Transform.Position, "Copy moved authored coordinates");
-            Check(reopened.BackgroundReplayId == Guid.Empty && !reopened.UsePerformanceWorld
-                && reopened.Objects[0].ReplacePlayerUid.Length == 0, "Copy retained automatic old-world effects");
+            Check(reopened.BackgroundReplayId == source.BackgroundReplayId && reopened.UsePerformanceWorld == source.UsePerformanceWorld
+                && reopened.Objects[0].ReplacePlayerUid == actor.ReplacePlayerUid, "Same-world duplicate changed world or player settings");
             Check(File.ReadAllBytes(store.AssetPath(copy.Id, texture.Source)).SequenceEqual(new byte[] { 1, 2, 3 }), "Copy lost its texture");
             Check(File.ReadAllBytes(store.AssetPath(copy.Id, take.WorldSource)).SequenceEqual(new byte[] { 5, 6, 7 }), "Copy lost its local recording");
             Check(copy.Performances.Values.Single().WorldSource == take.WorldSource, "Copy disconnected its performance recording");
             Check(File.ReadAllText(Path.Combine(store.DirectoryFor(source.Id), "project.json")) == original
                 && source.BackgroundReplayId != Guid.Empty && actor.ReplacePlayerUid == "live-player", "Copy modified original work");
+            store.Save(new DirectorCreationProject { WorldId = "world-b" });
+            store.Save(new DirectorCreationProject { WorldId = "world-a", Dimension = 0 });
+            store.Save(new DirectorCreationProject());
+            Check(store.List().Count(e => DirectorCreationWorldScope.Matches(e.WorldId, e.Dimension, "world-a", 1)) == 2, "World filtering lost a same-world duplicate or includes unrelated works");
             Check(store.List().Count(e => DirectorCreationWorldScope.Matches(e.WorldId, e.Dimension, "world-b", 0)) == 1, "World filtering includes unrelated works");
         }
         finally { if (Directory.Exists(root)) Directory.Delete(root, true); }

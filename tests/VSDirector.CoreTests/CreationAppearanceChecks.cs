@@ -53,6 +53,36 @@ internal static class CreationAppearanceChecks
         Check(track.Keys[0].Value == default && model.Parts.Count == 4, "Appearance mutated shared source data");
         Check(captured.Parts[0].Id == capturedBody.Id && before.Objects[0].ModelId == model.Id,
             "Appearance mutated its capture or history snapshot");
+        string root=Path.Combine(Path.GetTempPath(),"director-equipment-"+Guid.NewGuid().ToString("N"));
+        var session=new DirectorCreationSession(new(root));session.Open(project);
+        var unrelated=new CreationAnimation{ModelId=model.Id,Duration=2000,Tracks=[new(){Keys=Enumerable.Range(0,50000).Select(i=>new CreationKeyframe{Time=i/30d}).ToList()}]};
+        project.Animations.Add(unrelated);
+        int models=project.Models.Count, animations=project.Animations.Count;
+        var source=new CreationActorSource{AppearanceData=[1,2,3]};
+        long allocated=GC.GetAllocatedBytesForCurrentThread();
+        for(int i=0;i<5;i++)session.ReplaceActorAppearance("Clothes",actor.Id,captured,source,[]);
+        Check(GC.GetAllocatedBytesForCurrentThread()-allocated<2000000,"Clothing edits copied the unrelated library");
+        Check(project.Models.Count==models&&project.Animations.Count==animations,"Repeated dressing duplicated models/actions");
+        Check(actor.ModelId==updated.Id&&clip.AnimationId==copied.Id,"Private actor appearance changed animation identity");
+        for(int i=0;i<5;i++)session.Undo();
+        Check(actor.ActorSource is null&&project.Models.Count==models,"Scoped appearance undo lost source or models");
+        for(int i=0;i<5;i++)session.Redo();
+        Check(actor.ActorSource!.AppearanceData.SequenceEqual(new byte[]{1,2,3}),"Scoped appearance redo failed");
+        var newHand=new CreationSceneObject{Kind=CreationObjectKind.Item,ParentId=actor.Id,ParentPartId=hand.Id,ActorHand=2};
+        session.EditActorHand("Hand",actor.Id,newHand,o=>o.ResourceCode="game:torch");
+        session.Undo();Check(!project.Objects.Any(o=>o.Id==newHand.Id),"Hand undo left new attachment");
+        session.Redo();Check(project.Objects.Single(o=>o.Id==newHand.Id).ResourceCode=="game:torch","Hand redo failed");
+        session.Edit("Placement",p=>p.Objects.First(o=>o.Id==actor.Id).Name="Renamed");
+        session.Undo();session.Undo();session.Redo();session.Redo();
+        Check(session.Project!.Objects.First(o=>o.Id==actor.Id).Name=="Renamed"&&session.Project.Animations.Last().Tracks[0].Keys.Count==50000,"Mixed full/equipment history lost data");
+        var sharedSession=new DirectorCreationSession(new(root));sharedSession.Open(before);
+        int originalModels=before.Models.Count,originalActions=before.Animations.Count;
+        sharedSession.ReplaceActorAppearance("Shared clothes",actor.Id,captured,source,[]);
+        Check(before.Models.Count==originalModels+1&&before.Animations.Count==originalActions+1,"Shared actor was not isolated");
+        sharedSession.Undo();before.Validate();
+        Check(before.Models.Count==originalModels&&before.Animations.Count==originalActions&&before.Objects[0].ModelId==model.Id,"Shared appearance undo retained copies");
+        sharedSession.Redo();before.Validate();
+        Check(before.Models.Count==originalModels+1&&before.Animations.Count==originalActions+1&&before.Objects[1].ModelId==model.Id,"Shared appearance redo lost isolation");
     }
 
     private static void Check(bool condition, string message)

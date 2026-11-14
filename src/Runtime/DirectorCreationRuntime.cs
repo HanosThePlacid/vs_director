@@ -21,9 +21,10 @@ internal sealed partial class DirectorCreationRuntime : IDirectorOffscreenFrameS
     internal DirectorCreationSession Session { get; }
     internal DirectorCreationRenderer Renderer { get; }
     internal DirectorCreationExtensions Extensions { get; } = new();
-    internal bool Enabled { get => Renderer.Visible; set { if (!value && Exporting) CancelExport(); if (!value) FinishPerformanceBeforeTransition(); Renderer.Visible = value; if (!value) { Session.Play(false); RestoreEntities(); RestoreVisualEnvironment(); StopCreationWorld(); } } }
+    internal bool Enabled { get => Renderer.Visible; set { if (!value && Exporting) CancelExport(); if (!value) FinishPerformanceBeforeTransition(); Renderer.Visible = value; if (!value) { ResetParticles(); Session.Play(false); RestoreEntities(); RestoreVisualEnvironment(); StopCreationWorld(); } } }
     internal bool Preview { get; set; }
     internal bool Guides { get; set; } = true;
+    internal CreationProjectDefaults NewProjectDefaults { get; set; } = new();
     internal int PreviewTexture { get; private set; }
     internal string Status { get; private set; } = "";
     internal bool Exporting => pendingExport is not null || fileSink is not null || finishing is not null;
@@ -52,6 +53,7 @@ internal sealed partial class DirectorCreationRuntime : IDirectorOffscreenFrameS
         Renderer = new(api, Session) { Visible = false };
         Current = this; Session.FrameReady = FrameReady;
         tick = api.Event.RegisterGameTickListener(Tick, 16);
+        api.Event.BlockChanged += ParticleBlockChanged;
     }
     internal void SetStatus(string message) => Status = Message(message);
     internal void New(string name)
@@ -60,11 +62,13 @@ internal sealed partial class DirectorCreationRuntime : IDirectorOffscreenFrameS
         if (Exporting) throw new InvalidOperationException(L("creation-finish-or-cancel-the-export-first"));
         if (!owner.TryCaptureCreationView(out var pose)) throw new InvalidOperationException(L("creation-the-current-world-view-is-unavailable"));
         StopSounds();
+        ResetParticles();
         var project = new DirectorCreationProject { Name = string.IsNullOrWhiteSpace(name) ? L("creation-new-project") : name, WorldId = api.World.SavegameIdentifier,
             Dimension = pose.Dimension, Origin = new(Math.Floor(pose.X), Math.Floor(pose.Y - 1.6), Math.Floor(pose.Z)) };
         var camera = new CreationSceneObject { Name = L("creation-camera"), Kind = CreationObjectKind.Camera,
             Transform = new() { Position = new(pose.X - project.Origin.X, pose.Y - project.Origin.Y, pose.Z - project.Origin.Z), Rotation = DirectorCreationMath.CameraRotationFromNative(pose) }, Fov = pose.Fov };
         project.Objects.Add(camera); project.CameraId = camera.Id;
+        NewProjectDefaults.Apply(project);
         StopCreationWorld();
         Session.Open(project); Renderer.ReloadTextures(); Session.SelectedObject = camera.Id; Session.Save(); Enabled = true;
         Status = L("creation-create-an-actor-or-import-a-shape-model-then-add-keyframes");
@@ -75,7 +79,7 @@ internal sealed partial class DirectorCreationRuntime : IDirectorOffscreenFrameS
         RequireProjectWorld(project);
         FinishPerformanceBeforeTransition();
         if (Exporting) throw new InvalidOperationException(L("creation-finish-or-cancel-the-export-first"));
-        ClosePlayerInventory(); StopSounds(); StopCreationWorld(); Session.Open(project); Renderer.ReloadTextures(); Enabled = true;
+        ClosePlayerInventory(); ResetParticles(); StopSounds(); StopCreationWorld(); Session.Open(project); Renderer.ReloadTextures(); Enabled = true;
         if (recovery) Session.Changed();
     }
     internal bool MatchesProjectWorld(string world, int dimension)
@@ -87,15 +91,13 @@ internal sealed partial class DirectorCreationRuntime : IDirectorOffscreenFrameS
         if (!MatchesProjectWorld(project.WorldId, project.Dimension))
             throw new InvalidOperationException(L("creation-project-world-mismatch"));
     }
-    internal void DuplicateProject(Guid id, bool toCurrentWorld = false, bool recovery = false)
+    internal void DuplicateProject(Guid id)
     {
         if (Exporting || PerformanceActive) throw new InvalidOperationException(L("creation-recording-unavailable"));
-        if (Session.Project?.Id == id && Session.Dirty && !recovery) Session.Save();
-        var source = Session.Store.Load(id, recovery);
-        if (!toCurrentWorld) RequireProjectWorld(source);
-        var player = api.World.Player?.Entity ?? throw new InvalidOperationException(L("creation-the-current-world-view-is-unavailable"));
-        var copy = toCurrentWorld ? Session.Store.CopyToWorld(source, api.World.SavegameIdentifier, player.Pos.Dimension)
-            : Session.Store.Duplicate(source);
+        if (Session.Project?.Id == id && Session.Dirty) Session.Save();
+        var source = Session.Store.Load(id);
+        RequireProjectWorld(source);
+        var copy = Session.Store.Duplicate(source);
         Open(copy.Id);
     }
     internal CreationVector CursorPosition()
@@ -133,6 +135,7 @@ internal sealed partial class DirectorCreationRuntime : IDirectorOffscreenFrameS
                 if (Exporting) CancelExport();
                 FinishPerformanceBeforeTransition(); StopSounds(); StopCreationWorld();
                 RestoreEntities(); RestoreVisualEnvironment();
+                ResetParticles();
                 Status = L("creation-project-world-mismatch");
                 return;
             }
@@ -165,7 +168,7 @@ internal sealed partial class DirectorCreationRuntime : IDirectorOffscreenFrameS
                 else
                 {
                     bool advancing = Session.Playing;
-                    if (CreationWorldReady) Session.Tick(delta);
+                    if (CreationWorldReady && ParticlesReady) Session.Tick(delta);
                     UpdateCreationWorld(advancing && Session.EditingAnimation is null);
                     if (!PerformanceActive && Session.EditingAnimation is null && advancing && project.BackgroundReplayId == owner.ActiveReplayId && project.BackgroundReplayId != Guid.Empty)
                         owner.SeekCreationBackground(BackgroundTime(Session.Time), advancing: true);
@@ -176,8 +179,8 @@ internal sealed partial class DirectorCreationRuntime : IDirectorOffscreenFrameS
                 Session.RecordSample(new(entity.Pos.X, entity.Pos.Y, entity.Pos.Z), new(entity.Pos.Pitch * GameMath.RAD2DEG, entity.Pos.Yaw * GameMath.RAD2DEG, entity.Pos.Roll * GameMath.RAD2DEG));
                 if (!Session.Playing) Session.StopRecording();
             }
-            UpdateSounds();
             UpdateParticles();
+            UpdateSounds();
             UpdateView();
         }
         catch (Exception e)
@@ -205,7 +208,7 @@ internal sealed partial class DirectorCreationRuntime : IDirectorOffscreenFrameS
     {
         if (frame.ViewId != viewId) return;
         PreviewTexture = frame.ColorTextureId;
-        if (screenshot.Length > 0)
+        if (screenshot.Length > 0 && CreationWorldReady && ParticlesReady && ParticleError.Length==0 && !ParticleRebuildCancelled)
         {
             try { using var bitmap = api.Render.GrabScreenshot(frame.Width, frame.Height, false, true); bitmap.Save(screenshot); Status = L("creation-screenshot-saved") + screenshot; }
             catch (Exception e) { Status = Message(e.Message); }
@@ -214,7 +217,7 @@ internal sealed partial class DirectorCreationRuntime : IDirectorOffscreenFrameS
         if (fileSink is null || frameSubmitted || stopRequested) return;
         bool backgroundReady = Session.Project is not { BackgroundReplayId: var background } || background == Guid.Empty
             || (background == owner.ActiveReplayId && owner.CreationBackgroundReady);
-        backgroundReady &= CreationWorldReady;
+        backgroundReady &= CreationWorldReady && ParticlesReady && ParticleError.Length==0 && !ParticleRebuildCancelled;
         if (exportGate.Next(backgroundReady) != DirectorReplayExportFrameAction.Capture) return;
         long before = fileSink.Statistics.SubmittedReadbacks;
         fileSink.OnFrame(frame);
@@ -383,11 +386,13 @@ internal sealed partial class DirectorCreationRuntime : IDirectorOffscreenFrameS
         if (Exporting) CancelExport();
         RestoreEntities(); Enabled = false; Session.Play(false); Preview = false; StopSounds();
         RestoreVisualEnvironment();
-        Renderer.NativeParticlesActive = false; screenshot = ""; offscreen?.SetPreviewView(viewId, null);
+        screenshot = ""; offscreen?.SetPreviewView(viewId, null);
     }
     public void Dispose()
     {
         if (disposed) return; disposed = true; api.Event.UnregisterGameTickListener(tick);
+        api.Event.BlockChanged -= ParticleBlockChanged;
+        particleResources?.Dispose(); ParticleOverrides.Dispose();
         RestoreEntities(); if (ReferenceEquals(Current,this)) Current=null;
         exportCancellation?.Cancel(); fileSink?.Stop(); fileSink?.Dispose(); fileSink = null;
         try { finishing?.GetAwaiter().GetResult(); } catch (OperationCanceledException) { }

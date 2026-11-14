@@ -8,7 +8,8 @@ public static class DirectorCreationAppearance
     {
         var original = project.Models.First(m => m.Id == actor.ModelId);
         var replacement = CreationJson.Clone(captured);
-        replacement.Id = Guid.NewGuid();
+        bool shared = project.Objects.Any(o => o.Id != actor.Id && o.ModelId == original.Id);
+        replacement.Id = shared ? Guid.NewGuid() : original.Id;
         replacement.Name = original.Name;
         replacement.Folder = original.Folder;
         replacement.AnimationVersion = original.AnimationVersion;
@@ -56,7 +57,7 @@ public static class DirectorCreationAppearance
         // Isolate both the model and its actions. Other actors using the previous
         // model must keep their own clothing, animation edits and clip sources.
         var animations = new Dictionary<Guid, Guid>();
-        foreach (var source in project.Animations.Where(a => a.ModelId == original.Id).ToArray())
+        foreach (var source in project.Animations.Where(a => shared && a.ModelId == original.Id).ToArray())
         {
             var copy = CreationJson.Clone(source);
             copy.Id = Guid.NewGuid(); copy.ModelId = replacement.Id;
@@ -67,7 +68,8 @@ public static class DirectorCreationAppearance
             }
             project.Animations.Add(copy); animations[source.Id] = copy.Id;
         }
-        project.Models.Add(replacement);
+        if (shared) project.Models.Add(replacement);
+        else project.Models[project.Models.IndexOf(original)] = replacement;
         actor.ModelId = replacement.Id;
         foreach (var clip in project.Clips.Where(c => c.ObjectId == actor.Id))
             if (animations.TryGetValue(clip.AnimationId, out var animation)) clip.AnimationId = animation;

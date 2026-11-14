@@ -85,6 +85,20 @@ public sealed partial class DirectorCreationSession
         { channels.Remove(channel); if (channels.Count == 0) { draftChannels.Remove((objectId, partId)); drafts.Remove((objectId, partId)); } }
         return key;
     }
+    public void RecordTransformKeys(Guid objectId,Guid partId,bool positionOnly=false)
+    {
+        if(Frame?.Objects.GetValueOrDefault(objectId) is not {} state)return;
+        // Freeze the evaluated preview before the first write refreshes it.
+        var transform=(partId==Guid.Empty?state.Transform:state.Pose.GetValueOrDefault(partId)??new()) with{};
+        CreationChannel[] channels=positionOnly?[CreationChannel.Position]:[CreationChannel.Position,CreationChannel.Rotation,CreationChannel.Scale,CreationChannel.Pivot];
+        if(channels.Any(c=>IsRecordedChannel(objectId,partId,c)))throw new InvalidOperationException("Recorded performance owns this pose time.");
+        Play(false);
+        Edit("Record preview transform",_=>
+        {
+            foreach(var channel in channels)
+            {SeedKey(objectId,partId,channel);WriteKey(objectId,partId,channel,Component(transform,channel));}
+        });
+    }
     public void CommitTransformDrafts()
     {
         if (PoseEditing) { SavePose(); return; }
@@ -137,5 +151,13 @@ public sealed partial class DirectorCreationSession
         if (partId == Guid.Empty) obj.Transform = updated; else if (updated != basis) obj.Pose[partId] = updated;
         // Keep the preview's static components in sync during mixed-channel edits.
         if (draftChannels.ContainsKey((objectId, partId))) drafts[(objectId, partId)] = value with { };
+    }
+    public void PrepareCameraTransform(Guid objectId)
+    {
+        if(AnimationEditing||Project?.Objects.Find(o=>o.Id==objectId)?.Kind!=CreationObjectKind.Camera)return;
+        // A base transform is masked by absolute animation tracks. Editing the
+        // visible camera must target the current time instead of an invisible base.
+        if(new[]{CreationChannel.Position,CreationChannel.Rotation,CreationChannel.Scale,CreationChannel.Pivot}
+            .Any(c=>IsAnimated(objectId,Guid.Empty,c)))SetEditTask(CreationEditTask.Animation);
     }
 }

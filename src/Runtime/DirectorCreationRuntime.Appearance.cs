@@ -12,13 +12,14 @@ namespace VSDirector.Runtime;
 
 internal sealed partial class DirectorCreationRuntime
 {
-    private ItemStack[]? actorItemCatalog;
     private readonly Dictionary<string, SkinnablePart[]> actorSkinOptions = new();
     private static byte[] CaptureAppearanceData(Entity? entity)
     {
         if (entity is null) return [];
         var data = new TreeAttribute();
         if (entity.WatchedAttributes.GetTreeAttribute("skinConfig") is { } skin) data["skinConfig"] = skin.Clone();
+        foreach(string key in new[]{"voicetype","voicepitch","characterClass"})
+            if(entity.WatchedAttributes[key] is {} value)data[key]=value.Clone();
         if (entity.GetBehavior<EntityBehaviorTexturedClothing>()?.Inventory is { } inventory)
         {
             var clothes = new TreeAttribute(); inventory.ToTreeAttributes(clothes); data["wearablesInv"] = clothes;
@@ -54,8 +55,22 @@ internal sealed partial class DirectorCreationRuntime
         => ActorAppearance(actor).GetTreeAttribute("skinConfig")?.GetTreeAttribute("appliedParts")?.GetString(part) ?? "";
     internal string ActorWearableName(CreationSceneObject actor, int slot)
     {
-        var stack = ActorAppearance(actor).GetTreeAttribute("wearablesInv")?.GetTreeAttribute("slots")?.GetItemstack(slot.ToString());
-        return stack?.ResolveBlockOrItem(api.World) == true ? stack.GetName() : L("creation-none");
+        return ActorWearableStack(actor,slot)?.GetName()??L("creation-none");
+    }
+    private ItemStack? ActorWearableStack(CreationSceneObject actor,int slot)
+    {
+        var stack=ActorAppearance(actor).GetTreeAttribute("wearablesInv")?.GetTreeAttribute("slots")?.GetItemstack(slot.ToString());
+        return stack?.ResolveBlockOrItem(api.World)==true?stack:null;
+    }
+    private ItemStack? ActorHandStack(CreationSceneObject actor,int hand)
+    {
+        var item=Session.Project?.Objects.FirstOrDefault(o=>o.ParentId==actor.Id&&o.ActorHand==hand);
+        if(item?.ItemStackData is {Length:>0} data)
+        {using var reader=new BinaryReader(new MemoryStream(data,false));return new ItemStack(reader,api.World);}
+        if(item is null||item.ResourceCode.Length==0)return null;
+        var code=new AssetLocation(item.ResourceCode);
+        var collectible=(CollectibleObject?)api.World.GetItem(code)??api.World.GetBlock(code);
+        return collectible is null?null:new ItemStack(collectible);
     }
     internal string ActorHandName(CreationSceneObject actor, int hand)
     {
@@ -73,21 +88,36 @@ internal sealed partial class DirectorCreationRuntime
     {
         if (PerformanceActive || Exporting) throw new InvalidOperationException(L("creation-recording-unavailable"));
         ClosePlayerInventory(); Session.Play(false);
-        actorItemCatalog ??= api.World.Collectibles.SelectMany(c =>
+        CreationSceneObject CurrentActor()=>Session.Project?.Objects.Find(o=>o.Id==actor.Id)
+            ??throw new InvalidOperationException(L("creation-native-unavailable"));
+        var targets=new List<ActorEquipmentTarget>();
+        foreach(int h in new[]{1,2})targets.Add(new(L(h==1?"creation-right-hand-item":"creation-left-hand-item"),
+            ()=>ActorHandStack(CurrentActor(),h),_=>true,stack=>SetActorHand(CurrentActor(),h,stack),h==1?"handheld":"offhand"));
+        int selected=hand==2?1:0;
+        if(ActorHasClothing(actor))foreach(var slot in Enum.GetValues<EnumCharacterDressType>().Where(t=>(int)t>=0).OrderBy(t=>(int)t))
         {
-            try { return c.GetHandBookStacks(api) ?? new List<ItemStack>(); }
-            catch (Exception e) { api.Logger.Debug("VS Director: unavailable catalog item {0}: {1}", c.Code, e.Message); return new List<ItemStack>(); }
-        }).Where(s => s?.Collectible?.Code is not null).ToArray();
-        var entries = clothingSlot < 0 ? actorItemCatalog
-            : actorItemCatalog.Where(s => ItemSlotCharacter.IsDressType(s, (EnumCharacterDressType)clothingSlot)).ToArray();
-        nativeAppearanceDialog = new DirectorActorItemDialog(api, L(clothingSlot < 0 ? "creation-actor-item-picker" : "creation-actor-clothing-picker"), entries,
-            stack =>
-            {
-                var current = Session.Project?.Objects.Find(o => o.Id == actor.Id);
-                if (current is null) return;
-                if (clothingSlot < 0) SetActorHand(current, hand, stack); else SetActorWearable(current, clothingSlot, stack);
-            }, e => { Status = e.Message; api.Logger.Error(e); });
-        if (!nativeAppearanceDialog.TryOpen()) { ClosePlayerInventory(); throw new InvalidOperationException(L("creation-native-inventory-unavailable")); }
+            if((int)slot==clothingSlot)selected=targets.Count;
+            targets.Add(new(L("creation-dress-"+slot.ToString().ToLowerInvariant()),()=>ActorWearableStack(CurrentActor(),(int)slot),
+                stack=>ItemSlotCharacter.IsDressType(stack,slot),stack=>SetActorWearable(CurrentActor(),(int)slot,stack),slot switch
+                {EnumCharacterDressType.Head or EnumCharacterDressType.ArmorHead=>"hat",EnumCharacterDressType.Foot=>"boots",
+                    EnumCharacterDressType.LowerBody or EnumCharacterDressType.ArmorLegs=>"trousers",EnumCharacterDressType.Hand=>"gloves",
+                    EnumCharacterDressType.Shoulder=>"cape",EnumCharacterDressType.Neck=>"necklace",EnumCharacterDressType.Waist=>"belt",
+                    EnumCharacterDressType.Emblem=>"medal",EnumCharacterDressType.Face=>"mask",EnumCharacterDressType.Arm=>"bracers",_=>"shirt"}));
+        }
+        try
+        {
+            appearanceActorId=actor.Id;
+            nativeAppearanceDialog=new DirectorActorItemDialog(api,actor.Name+" · "+L("creation-player-appearance-equipment"),targets,selected,
+                DrawAppearanceEntity,e=>{Status=e.Message;api.Logger.Error(e);})
+                { ZoomWorld = delta => owner.ZoomCreationView(delta, actor.Id), CanOrbitWorld = owner.CanOrbitCreationView,
+                    OrbitWorld = (dx,dy) => owner.OrbitCreationActor(actor.Id,dx,dy) };
+            if(ActorHasClothing(actor))((DirectorActorItemDialog)nativeAppearanceDialog).ConfigureCustomization(
+                ()=>AppearanceEntity()??throw new InvalidOperationException(L("creation-native-unavailable")),
+                (part,variant)=>SetActorSkin(CurrentActor(),part,variant),code=>SetActorClass(CurrentActor(),code));
+            nativeAppearanceDialog.OnClosed+=DisposeAppearanceEntity;
+            if(!nativeAppearanceDialog.TryOpen())throw new InvalidOperationException(L("creation-native-inventory-unavailable"));
+        }
+        catch {ClosePlayerInventory();throw;}
     }
     internal void SetActorSkin(CreationSceneObject actor, string part, string variant)
         => RebuildActorAppearance(actor, entity =>
@@ -96,6 +126,21 @@ internal sealed partial class DirectorCreationRuntime
             if (!skin.AvailableSkinPartsByCode.TryGetValue(part, out var available) || !available.VariantsByCode.ContainsKey(variant))
                 throw new InvalidOperationException(L("creation-player-appearance-incompatible"));
             skin.selectSkinPart(part, variant, retesselateShape: false, playVoice: false);
+        });
+    private void SetActorClass(CreationSceneObject actor,string code)
+        =>RebuildActorAppearance(actor,entity=>
+        {
+            var selected=api.ModLoader.GetModSystem<CharacterSystem>().characterClasses.First(c=>c.Code==code);
+            entity.WatchedAttributes.SetString("characterClass",code);
+            var inventory=entity.GetBehavior<EntityBehaviorTexturedClothing>()!.Inventory;
+            for(int i=0;i<Math.Min(12,inventory.Count);i++)inventory[i].Itemstack=null;
+            foreach(var gear in selected.Gear)
+            {
+                var copy=gear.Clone();
+                if(!copy.Resolve(api.World,"Director actor class",false)||copy.ResolvedItemstack is not {} stack)continue;
+                for(int i=0;i<inventory.Count;i++)
+                    if(ItemSlotCharacter.IsDressType(stack,(EnumCharacterDressType)i)){inventory[i].Itemstack=stack.Clone();break;}
+            }
         });
     internal void SetActorWearable(CreationSceneObject actor, int slot, ItemStack? stack)
         => RebuildActorAppearance(actor, entity =>

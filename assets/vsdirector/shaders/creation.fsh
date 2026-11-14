@@ -1,5 +1,8 @@
 #version 330 core
 in vec2 uv;
+in vec4 vertexColor;
+in vec3 particleLight;
+uniform int vertexColorMode;
 in vec3 surfacePosition;
 in vec3 eyePosition;
 uniform sampler2D tex;
@@ -9,6 +12,7 @@ uniform float glow;
 uniform vec3 worldLight;
 uniform vec3 lightDirection;
 uniform int surfaceShading;
+uniform int particleMask;
 uniform vec4 fogColor;
 uniform float fogDensity;
 uniform float fogMinimum;
@@ -16,7 +20,11 @@ layout(location = 0) out vec4 outColor;
 layout(location = 1) out vec4 outGlow;
 void main() {
     vec4 color = textured != 0 ? texture(tex, uv) : vec4(1.0);
-    color *= tint;
+    color *= tint * vertexColor;
+    if (particleMask != 0) {
+        float radius = length(uv * 2.0 - 1.0);
+        color.a *= 1.0 - smoothstep(0.0, 1.0, radius);
+    }
     if (color.a < 0.01) discard;
     vec3 normal = cross(dFdx(surfacePosition), dFdy(surfacePosition));
     normal /= max(length(normal), 0.000001);
@@ -25,7 +33,7 @@ void main() {
     float shade = surfaceShading != 0 ? max(0.45, 0.5 + 0.5 * dot(normal, direction)) : 1.0;
     if (surfaceShading != 0) shade = max(shade, max(0.0, normal.y) * 0.95);
     float emission = clamp(glow, 0.0, 1.0);
-    vec3 lighting = mix(max(worldLight, vec3(0.0)) * shade, vec3(1.0), emission);
+    vec3 lighting = mix(max(vertexColorMode != 0 ? particleLight : worldLight, vec3(0.0)) * shade, vec3(1.0), emission);
     float fog = clamp(1.0 - exp(-length(eyePosition) * max(0.0, fogDensity)) + fogMinimum, 0.0, 1.0);
     outColor = vec4(mix(color.rgb * lighting, fogColor.rgb, fog), color.a);
     // The world framebuffer has a separate bloom attachment. Leaving it

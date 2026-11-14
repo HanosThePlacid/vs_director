@@ -35,6 +35,10 @@ public sealed partial class DirectorCreationSession
     }
     private void ResetPoseDraft()
     { poseDraft = poseGesture = null; poseUndo.Clear(); poseRedo.Clear(); }
+    private bool PoseChanged() => poseDraft is not null && !SamePose(poseGesture ?? CapturePose(), poseDraft);
+    private static bool SamePose(CreationPoseSnapshot a, CreationPoseSnapshot b)
+        => a.Hidden.SetEquals(b.Hidden) && a.Bones.Count == b.Bones.Count
+            && a.Bones.All(p => b.Bones.TryGetValue(p.Key, out var value) && value == p.Value);
     private bool BeginPoseGesture()
     {
         if (!PoseEditing) return false;
@@ -43,7 +47,7 @@ public sealed partial class DirectorCreationSession
     private bool EndPoseGesture()
     {
         if (poseGesture is null) return false;
-        if (poseDraft is not null && System.Text.Json.JsonSerializer.Serialize(poseGesture, CreationJson.Options) != System.Text.Json.JsonSerializer.Serialize(poseDraft, CreationJson.Options))
+        if (poseDraft is not null && !SamePose(poseGesture, poseDraft))
         { poseUndo.Push(poseGesture); poseRedo.Clear(); }
         poseGesture = null; return true;
     }
@@ -56,7 +60,7 @@ public sealed partial class DirectorCreationSession
     }
     public void ApplyPose(CreationPoseSnapshot pose)
     {
-        BeginGesture(); var current = CapturePose();
+        BeginGesture(poseOnly: true); var current = CapturePose();
         foreach (var id in current.Bones.Keys.ToArray())
             if (pose.Bones.TryGetValue(id, out var value)) current.Bones[id] = value with { };
         current.Hidden = pose.Hidden.Where(current.Bones.ContainsKey).ToHashSet(); poseDraft = current;

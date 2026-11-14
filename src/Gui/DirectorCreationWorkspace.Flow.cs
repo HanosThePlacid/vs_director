@@ -1,5 +1,6 @@
-using static VSDirector.Gui.DirectorCreationText;
+﻿using static VSDirector.Gui.DirectorCreationText;
 using ImGuiNET;
+using System.Numerics;
 using VSDirector.Data;
 
 namespace VSDirector.Gui;
@@ -11,9 +12,9 @@ internal sealed partial class DirectorCreationWorkspace
     private bool pendingPrompt;
     internal Action? LeaveRequested;
     internal void Enter()
-    { Active = true; host.SetCreationMode(true); Runtime.Enabled = Project is not null; }
+    { Active = true; host.SetCreationMode(true); Runtime.NewProjectDefaults=editorPreferences.Defaults;Runtime.Guides=editorPreferences.Guides; Runtime.Enabled = Project is not null; }
     internal void Exit()
-    { PersistEditorPreferences(); Runtime.ClosePlayerInventory(); Runtime.Suspend(); Active = false; host.CreationPreviewVisible = false; host.SetCreationMode(false); }
+    { PersistEditorPreferences(); particlePreviews.Clear(); ClearActorPickerPreviews(); Runtime.ClosePlayerInventory(); Runtime.Suspend(); Active = false; host.CreationPreviewVisible = false; host.SetCreationMode(false); }
     internal void RequestLeave()
     {
         if (pendingTransition is not null) return;
@@ -23,12 +24,13 @@ internal sealed partial class DirectorCreationWorkspace
     internal void RequestEscape()
     {
         if (Runtime.NativeAppearanceEditorOpen) { Runtime.ClosePlayerInventory(); return; }
-        if(gizmoUsing || draggedKey!=Guid.Empty || draggedClip!=Guid.Empty || scenePoseDrag!=Guid.Empty || draggingPose is not null)
-        { Session.CancelGesture();gizmoUsing=false;handleAxis=-1;draggedKey=draggedClip=scenePoseDrag=Guid.Empty;draggingPose=null;return; }
+        if(gizmoUsing || draggedKey!=Guid.Empty || draggedClip!=Guid.Empty || draggedParticle!=Guid.Empty || scenePoseDrag!=Guid.Empty || draggingPose is not null)
+        { Session.CancelGesture();gizmoUsing=false;handleAxis=-1;draggedKey=draggedClip=draggedParticle=scenePoseDrag=Guid.Empty;draggingPose=null;return; }
         if (Runtime.PerformanceActive) { Runtime.StopPerformance(); return; }
         if (pendingTransition is not null) { ResolvePendingTransition(null); return; }
         if (ImGui.IsPopupOpen("", ImGuiPopupFlags.AnyPopupId | ImGuiPopupFlags.AnyPopupLevel)) return;
         if (auxiliary.Length > 0) { auxiliary = ""; return; }
+        if (preferencesOpen) { preferencesOpen=false;PersistEditorPreferences();return; }
         if(PosePicking) { LeaveBodySelection();return; }
         RequestLeave();
     }
@@ -117,6 +119,7 @@ internal sealed partial class DirectorCreationWorkspace
                 new("edit", L("creation-edit"), () => Menu("编辑")),
                 new("add", L("creation-add-menu"), () => Menu("创建")),
                 new("view", L("creation-view-menu"), () => Menu("窗口")),
+                new("settings", L("creation-settings-menu"), () => Menu("设置")),
                 new("save", L("creation-save-project"), () => Continue(Session.Save), Project is not null && Runtime.ProjectWorldMatches),
                 new("export", L("creation-export-menu"), () => auxiliary = "output", Project is not null && Runtime.ProjectWorldMatches)
             };
@@ -133,12 +136,23 @@ internal sealed partial class DirectorCreationWorkspace
     }
     private void DrawAuxiliary()
     {
+        if (auxiliary != "particles") particlePreviews.Clear();
+        if (auxiliary != "actors") ClearActorPickerPreviews();
         if (auxiliary.Length == 0) return;
         if (!Runtime.ProjectWorldMatches && auxiliary != "projects") auxiliary = "projects";
         bool open = true;
-        string title = auxiliary switch { "actors" => L("creation-native-actors"), "resources" => L("creation-resources"), "presets" => L("creation-presets"), "projects" => L("creation-projects"), "output" => L("creation-export-menu"), _ => L("creation-project-settings") };
-        ImGui.SetNextWindowSize(new(540, 480), ImGuiCond.FirstUseEver);
-        if (ImGui.Begin(title + "###creation-library", ref open, ImGuiWindowFlags.NoDocking))
+        string title = auxiliary switch { "particles" => L("creation-particle-picker"), "actors" => L("creation-actor-picker"), "resources" => L("creation-resources"), "presets" => L("creation-presets"), "projects" => L("creation-projects"), "output" => L("creation-export-menu"), _ => L("creation-project-settings") };
+        bool fullPicker = auxiliary is "particles" or "actors";
+        if(fullPicker)
+        {
+            var viewport = ImGui.GetMainViewport();
+            ImGui.SetNextWindowPos(viewport.Pos);
+            ImGui.SetNextWindowSize(Vector2.Max(Vector2.One, viewport.Size));
+        }
+        else ImGui.SetNextWindowSize(new(540, 480), ImGuiCond.FirstUseEver);
+        var flags = ImGuiWindowFlags.NoDocking;
+        if (fullPicker) flags |= ImGuiWindowFlags.NoMove | ImGuiWindowFlags.NoResize | ImGuiWindowFlags.NoCollapse | ImGuiWindowFlags.NoSavedSettings | ImGuiWindowFlags.NoScrollbar | ImGuiWindowFlags.NoScrollWithMouse;
+        if (ImGui.Begin(title + (fullPicker ? "###creation-picker-" + auxiliary : "###creation-library"), ref open, flags))
         {
             ImGui.SetWindowFontScale(DirectorImGuiTheme.Scale);
             ImGui.BeginDisabled(Runtime.Exporting || Runtime.PerformanceActive);
@@ -149,10 +163,11 @@ internal sealed partial class DirectorCreationWorkspace
                 else if (auxiliary == "resources") DrawAssets(); else DrawPresets();
             }
             else if (auxiliary == "actors") DrawActorLibrary();
+            else if (auxiliary == "particles") DrawParticleResources();
             else DrawProjectSettings(auxiliary == "output");
             ImGui.EndDisabled();
             if (Runtime.Exporting && Button(L("creation-cancel-export"))) Runtime.CancelExport();
-            if (error.Length > 0) ImGui.TextWrapped(error);
+            if (!fullPicker && error.Length > 0) ImGui.TextWrapped(error);
         }
         ImGui.End(); if (!open) auxiliary = "";
     }

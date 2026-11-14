@@ -20,6 +20,7 @@
 
   <ItemGroup>
     <Reference Include="OpenTK.Mathematics" HintPath="$(VintageStoryPath)\Lib\OpenTK.Mathematics.dll" Private="false" />
+    <Reference Include="OpenTK.Graphics" HintPath="$(VintageStoryPath)\Lib\OpenTK.Graphics.dll" Private="false" />
     <Reference Include="VSImGui" HintPath="$(VSImGuiPath)\VSImGui.dll" Private="false" />
     <Reference Include="ImGui.NET" HintPath="$(VSImGuiPath)\ImGui.NET.dll" Private="false" />
     <Reference Include="ImGuizmo.NET" HintPath="$(VSImGuiPath)\ImGuizmo.NET.dll" Private="false" />

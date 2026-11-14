@@ -1,4 +1,4 @@
-VS Director - third-party resources
+﻿VS Director - third-party resources
 
 Tabler Icons 3.34.1
 Copyright (c) 2020-2024 Paweł Kuna
@@ -33,6 +33,18 @@ The contextual body inspector and bounded automatic chains also reference
 VanillaAnimationEditor.Browser.cs and VanillaAnimationEditor.IkSymmetry.cs. License: MIT; full text: InGameDevTools-MIT.txt.
 Author authorization supplied by the project maintainer:
 https://discord.com/channels/302152934249070593/1510578112889622639/1569719241773416459
+Particle editor parameter groups, recursive native JSON editing and camera-facing
+preview design reference Utils/ParticleEffectsManager.cs and
+Utils/PreviewParticleSystem.cs. Client-only block/item replacement also references
+Integration/ParticleRuntimePatches.cs at the revision above. The adaptation targets
+the Vintage Story 1.22.3 AdvancedParticleProperties JSON contract, including random
+distributions, lifecycle evolution, secondary/death providers and runtime context.
+DirectorCreationParticleResources.cs, DirectorCreationWorkspace.AdvancedParticles.cs,
+DirectorCreationParticleSimulation.cs and DirectorCreationRenderer.Particles.cs
+independently implement resource scanning, restoration, deterministic fixed-step
+timeline simulation, collision queries and batched rendering. Unsupported native
+shader flags are retained with warnings; unsafe native Clone fields reject client
+replacement. No InGameDevTools runtime is bundled. The MIT notice above is retained.
 
 BBS-FS (McHorse and Wemppy)
 Copyright 2025 McHorse
@@ -51,7 +63,11 @@ Actor equipment and appearance editing follows BBS-FS's separate actor state
 workflow; selection and skin/clothing composition use Vintage Story public APIs.
 World-scoped project discovery also references BBSMod.java, FilmManager.java
 and ServerNetwork.java. Director independently implements world/dimension
-validation and cross-world copies in its own project storage format.
+validation in its own project storage format.
+Minimal IK overlays and contextual chain editing also reference
+ValueIKDebug.java, ValueModelDebug.java, ModelIKDebug.java and
+UIModelIKFormPanel.java. Control visibility, picking and settings are
+independently implemented for Director; no Minecraft runtime is bundled.
 
 Mine-imator (David Norgren / stuffbydavid and contributors)
 Source: https://github.com/stuffbydavid/Mine-imator
@@ -71,7 +87,7 @@ are bundled; the authorization does not license third-party game resources.
 Runtime dependencies
 Vintage Story and its game assemblies (including VSEssentials and VSSurvivalMod),
 Harmony, protobuf-net, cairo-sharp and
-OpenTK.Mathematics are supplied by the game installation and are not bundled
+OpenTK.Mathematics and OpenTK.Graphics are supplied by the game installation and are not bundled
 in this mod ZIP.
 VSImGui and its ImGui-related assemblies are supplied by the separately
 installed VSImGui mod and are not bundled in this mod ZIP.

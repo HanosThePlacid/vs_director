@@ -39,6 +39,11 @@ public static class DirectorCreationDependencies
         // Include hidden objects and bones: visibility can be animated later.
         foreach (var obj in project.Objects)
             if (obj.Kind == CreationObjectKind.Image) Asset(obj.AssetId, obj.Name);
+            else if (obj.Kind == CreationObjectKind.Particle && obj.ParticleSettings?.Texture is { Length:>0 } texture)
+                result.Add(new(obj.Name,texture,!texture.StartsWith("assets/",StringComparison.Ordinal)));
+        foreach(var obj in project.Objects.Where(o=>o.Kind==CreationObjectKind.Particle && o.ParticleEffect is not null))
+            foreach(var emitter in obj.ParticleEffect!.Emitters.Where(e=>e.Texture.Length>0))
+                result.Add(new(obj.Name+" / "+emitter.Name,emitter.Texture,!emitter.Texture.StartsWith("assets/",StringComparison.Ordinal)));
         var models = project.Objects.Where(o => o.Kind == CreationObjectKind.Model).Select(o => o.ModelId).ToHashSet();
         foreach (var model in project.Models.Where(m => models.Contains(m.Id)))
         {

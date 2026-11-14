@@ -17,6 +17,7 @@ internal sealed class DirectorEditorHandles
     private Vector3[] axes=[];
     private Vector2 center;
     private float units;
+    private Func<Vector3,Vector2?>? projectOffset;
     private Vector3 CameraAxis(int axis)=>axes[axis];
     private static Vec3d Add(Vec3d p,Vector3 v)=>new(p.X+v.X,p.Y+v.Y,p.Z+v.Z);
     private float CameraWorldUnitsPerPixel(Vec3d p)=>units;
@@ -24,19 +25,25 @@ internal sealed class DirectorEditorHandles
     private bool ProjectCameraHandlePoint(Vec3d pivot,Vec3d point,out Vector2 screen)
     {
         var m=viewMatrix; double x=point.X-pivot.X,y=point.Y-pivot.Y,z=point.Z-pivot.Z;
+        if(projectOffset is not null)
+        {
+            var projected=projectOffset(new((float)x,(float)y,(float)z));
+            screen=projected??default;return projected.HasValue;
+        }
         screen=center+new Vector2((float)(m[0]*x+m[4]*y+m[8]*z),(float)-(m[1]*x+m[5]*y+m[9]*z))/units;
         return float.IsFinite(screen.X)&&float.IsFinite(screen.Y);
     }
     private void CameraHandleLine(ImDrawListPtr draw,Vec3d pivot,Vec3d a,Vec3d b,uint color,int axis,float thickness)
     {
-        ProjectCameraHandlePoint(pivot,a,out var start); ProjectCameraHandlePoint(pivot,b,out var end);
+        if(!ProjectCameraHandlePoint(pivot,a,out var start)||!ProjectCameraHandlePoint(pivot,b,out var end))return;
         draw.AddLine(start,end,color,thickness*DirectorImGuiTheme.Scale);
         if(axis>=0) cameraToolLines.Add((start,end,axis,Guid.Empty));
     }
     private static float CameraLineDistance(Vector2 p,Vector2 a,Vector2 b)
     { var d=b-a; return Vector2.Distance(p,a+d*(d.LengthSquared()<1e-8?0:Math.Clamp(Vector2.Dot(p-a,d)/d.LengthSquared(),0,1))); }
-    internal int Draw(ImDrawListPtr draw,Vector2 origin,float worldUnits,float radius,double[] view,Vector3[] basis,bool rotate,bool scale,int active,bool interactive,int hover=-1,int rotationAxis=-1)
+    internal int Draw(ImDrawListPtr draw,Vector2 origin,float worldUnits,float radius,double[] view,Vector3[] basis,bool rotate,bool scale,int active,bool interactive,int hover=-1,int rotationAxis=-1,Func<Vector3,Vector2?>? project=null)
     {
+        projectOffset=project;
         center=origin;units=worldUnits;viewMatrix=view;axes=basis;cameraDragAxisIndex=active;cameraHoverAxis=hover;
         cameraToolLines.Clear();cameraToolTriangles.Clear();cameraToolHeads.Clear();
         Vec3d pivot=new(); Vector3 eye=Vector3.Normalize(new((float)view[2],(float)view[6],(float)view[10]));
@@ -55,10 +62,10 @@ internal sealed class DirectorEditorHandles
                 var d=axes[i];
                 float projected=new Vector2((float)(view[0]*d.X+view[4]*d.Y+view[8]*d.Z),
                     (float)(view[1]*d.X+view[5]*d.Y+view[9]*d.Z)).Length();
-                float length=radius/Math.Max(.15f,projected);
+                float length=projectOffset is null?radius/Math.Max(.15f,projected):radius;
                 CameraHandleLine(draw,pivot,pivot,Add(pivot,d*(length-(scale?0:CameraMoveConeLength(pivot,length)))),Color(i),i,1.5f);
                 if(scale) DrawCameraPivotBox(draw,pivot,length,i,Color(i)); else DrawCameraMoveCone(draw,pivot,length,i,Color(i));
-                ProjectCameraHandlePoint(pivot,Add(pivot,d*length),out var tip); draw.AddText(tip+new Vector2(6,-4)*DirectorImGuiTheme.Scale,Color(i),"XYZ"[i].ToString());
+                if(ProjectCameraHandlePoint(pivot,Add(pivot,d*length),out var tip))draw.AddText(tip+new Vector2(6,-4)*DirectorImGuiTheme.Scale,Color(i),"XYZ"[i].ToString());
             }
             if(!scale) for(int i=0;i<3;i++) DrawCameraMovePlane(draw,pivot,radius,i,Color(i),eye);
         }

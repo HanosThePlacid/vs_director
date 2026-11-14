@@ -1499,6 +1499,7 @@ public sealed partial class VSDirectorModSystem : ModSystem
         pendingVsmc2Shapes.Clear();
         vsmc2ShapeStatuses.Clear();
         settingsDialog?.Dispose();
+        creationGlobalSettings?.Dispose();
         settingsDialog = null;
         pathPreview?.Dispose();
         pathPreview = null;
@@ -1647,6 +1648,15 @@ public sealed partial class VSDirectorModSystem : ModSystem
                 ? activeWorkspace.ImGuiWorkspace
                 : null);
         settingsDialog.ToggleOpen();
+    }
+    private DirectorSettingsDialog? creationGlobalSettings;
+    internal void OpenCreationGlobalSettings()
+    {
+        if(capi is null)return;
+        // A standalone native settings host also works while legacy workspace
+        // callbacks are suspended by the independent creation dock.
+        creationGlobalSettings ??= new DirectorSettingsDialog(capi,this);
+        if(!creationGlobalSettings.IsOpened())creationGlobalSettings.ToggleOpen();
     }
     internal void OpenReplayStorageSettings()
     {

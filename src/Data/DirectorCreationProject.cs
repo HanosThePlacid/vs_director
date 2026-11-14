@@ -104,6 +104,7 @@ public sealed class CreationSceneObject
     public Guid AssetId { get; set; }
     public Guid ParentId { get; set; }
     public Guid ParentPartId { get; set; }
+    public CreationBindingSpace? BindingSpace { get; set; }
     public Guid TargetId { get; set; }
     public CreationTransform Transform { get; set; } = new();
     public Dictionary<Guid, CreationTransform> Pose { get; set; } = new();
@@ -124,10 +125,11 @@ public sealed class CreationSceneObject
     public double OrbitSpeed { get; set; } = 30;
     public double Shake { get; set; }
     public int ParticleCount { get; set; } = 8;
-    public bool NativeParticles { get; set; } = true;
     public double ParticleStart { get; set; }
     public double ParticleDuration { get; set; } = 2;
     public double ParticleLife { get; set; } = 1;
+    public CreationParticleSettings? ParticleSettings { get; set; }
+    public CreationParticleEffect? ParticleEffect { get; set; }
     public CreationVector ImageSize { get; set; } = new(1, 1, 0);
     public double[] Crop { get; set; } = [0, 0, 1, 1];
     public bool Billboard { get; set; }
@@ -299,6 +301,7 @@ public sealed partial class DirectorCreationProject
                 || !double.IsFinite(obj.Opacity) || !double.IsFinite(obj.Fov) || !double.IsFinite(obj.OrbitRadius) || !double.IsFinite(obj.OrbitSpeed) || !double.IsFinite(obj.Shake)
                 || !double.IsFinite(obj.ParticleLife) || !double.IsFinite(obj.ParticleStart) || !double.IsFinite(obj.ParticleDuration) || !obj.ImageSize.Finite())
                 throw new InvalidDataException("Non-finite object transform.");
+            obj.ParticleSettings?.Validate();
             ValidateParent(obj.Id, objectParents);
         }
         foreach (var model in Models)

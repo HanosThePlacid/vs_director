@@ -34,12 +34,20 @@ internal static partial class DirectorImGuiProbe
                         throw new Exception("Mismatched work/recovery replaced the active document");
                 }
                 bool copyRejected = false;
-                try { AccessTools.Method(type, "DuplicateProject").Invoke(runtime, [target.Id, false, false]); }
+                try { AccessTools.Method(type, "DuplicateProject").Invoke(runtime, [target.Id]); }
                 catch (TargetInvocationException e) when (e.InnerException is InvalidOperationException) { copyRejected = true; }
                 if (!copyRejected) throw new Exception("Ordinary duplicate bypassed world scope");
+                session.Open(target);
+                int projectsBefore = session.Store.List().Count;
+                bool currentWorldRejected = false;
+                try { AccessTools.Method(type, "UseCurrentWorld").Invoke(runtime, null); }
+                catch (TargetInvocationException e) when (e.InnerException is InvalidOperationException) { currentWorldRejected = true; }
+                if (!currentWorldRejected || !ReferenceEquals(session.Project, target) || session.Store.List().Count != projectsBefore)
+                    throw new Exception("Use current world copied or accepted an incompatible work");
+                session.Open(current);
             }
             AccessTools.Method(type, "RequireProjectWorld").Invoke(runtime, [current]);
-            Console.WriteLine("PASS world/dimension/legacy open and recovery guards preserve the active document; ordinary duplicate cannot bypass scope");
+            Console.WriteLine("PASS world/dimension/legacy open and recovery guards preserve the active document; duplicate and current-world actions cannot bypass scope");
         }
         finally { if (Directory.Exists(root)) Directory.Delete(root, true); }
     }

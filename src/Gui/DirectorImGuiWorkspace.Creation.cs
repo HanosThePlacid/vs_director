@@ -15,6 +15,7 @@ internal sealed partial class DirectorImGuiWorkspace
     internal void MeasureCreationToolsHeight(float height)
     { if (fitCreationTools) creationToolsHeight = height; }
     internal float CreationAspect { get; set; } = 16f / 9;
+    internal Action? AppearanceOverlay { get; set; }
     internal void TrackCreationDock(string title)
     {
         uint id = ImGui.GetWindowDockID();
@@ -34,6 +35,14 @@ internal sealed partial class DirectorImGuiWorkspace
         {
             if (creationDock != 0) ImGui.DockSpace(creationDock, Vector2.Zero, ImGuiDockNodeFlags.KeepAliveOnly);
             previewPosition = Vector2.Zero; previewSize = frame;
+            ImGui.SetNextWindowPos(Vector2.Zero); ImGui.SetNextWindowSize(frame);
+            ImGui.PushStyleVar(ImGuiStyleVar.WindowPadding,Vector2.Zero);
+            ImGui.PushStyleVar(ImGuiStyleVar.WindowBorderSize,0);
+            bool overlay=ImGui.Begin("###vsdirector-appearance-outline",ImGuiWindowFlags.NoDecoration|ImGuiWindowFlags.NoInputs
+                |ImGuiWindowFlags.NoBackground|ImGuiWindowFlags.NoSavedSettings|ImGuiWindowFlags.NoDocking|ImGuiWindowFlags.NoFocusOnAppearing);
+            ImGui.PopStyleVar(2);
+            try {if(overlay)AppearanceOverlay?.Invoke();}
+            finally {ImGui.End();}
             return CallbackGUIStatus.DontGrabMouse;
         }
         if (VSDirector.Runtime.DirectorCreationRuntime.Current is { ControllingActor: true } recording)

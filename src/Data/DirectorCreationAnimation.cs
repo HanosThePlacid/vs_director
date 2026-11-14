@@ -177,7 +177,7 @@ public static class DirectorCreationEvaluator
                 if (p.Bones.TryGetValue(state.Source.ParentPartId, out var bone)) parent = bone * parent;
                 state.Visible &= p.Visible;
             }
-            state.World = state.Transform.Matrix() * parent;
+            state.World = state.Transform.Matrix() * (state.Source.BindingSpace?.Matrix() ?? Matrix4x4.Identity) * parent;
             resolving.Remove(id); resolved.Add(id);
             return state.World;
         }
@@ -274,7 +274,7 @@ public static class DirectorCreationEvaluator
 
 public sealed class DirectorCreationHistory
 {
-    private sealed record Entry(string Name, DirectorCreationProject? Snapshot, CreationClip? Clip = null, double Duration = 0, double LoopEnd = 0);
+    private sealed record Entry(string Name, DirectorCreationProject? Snapshot, CreationClip? Clip = null, double Duration = 0, double LoopEnd = 0, CreationPoseHistoryState? Pose = null, CreationEquipmentHistoryState? Equipment = null);
     private readonly Stack<Entry> undo = new(), redo = new();
     public IEnumerable<string> Entries => undo.Select(e => e.Name);
     public bool CanUndo => undo.Count > 0;
@@ -282,16 +282,34 @@ public sealed class DirectorCreationHistory
     public void Record(DirectorCreationProject before, string name)
     {
         undo.Push(new(name, before)); redo.Clear();
+        TrimUndo();
+    }
+    private void TrimUndo()
+    {
         if (undo.Count > 100) { var keep = undo.Take(100).Reverse().ToArray(); undo.Clear(); foreach (var item in keep) undo.Push(item); }
     }
     public DirectorCreationProject Undo(DirectorCreationProject current) => Restore(current, undo, redo);
     public DirectorCreationProject Redo(DirectorCreationProject current) => Restore(current, redo, undo);
     public void RecordClip(CreationClip before, string name, double duration, double loopEnd)
     { undo.Push(new(name, null, CreationJson.Clone(before), duration, loopEnd)); redo.Clear(); }
+    internal void RecordPose(CreationPoseHistoryState before, string name)
+    { undo.Push(new(name, null, Pose: before)); redo.Clear(); TrimUndo(); }
+    internal void RecordEquipment(CreationEquipmentHistoryState before, string name)
+    { undo.Push(new(name, null, Equipment: before)); redo.Clear(); TrimUndo(); }
     private static DirectorCreationProject Restore(DirectorCreationProject current, Stack<Entry> from, Stack<Entry> to)
     {
         if (from.Count == 0) return current;
         var entry = from.Pop();
+        if (entry.Equipment is { } equipment)
+        {
+            to.Push(new(entry.Name, null, Equipment: equipment.CaptureCurrent(current)));
+            equipment.Restore(current); return current;
+        }
+        if (entry.Pose is { } pose)
+        {
+            to.Push(new(entry.Name, null, Pose: CreationPoseHistoryState.Capture(current, pose.Actor, pose.Animation)));
+            pose.Restore(current); return current;
+        }
         if (entry.Clip is { } clip)
         {
             int index = current.Clips.FindIndex(c => c.Id == clip.Id);

@@ -13,9 +13,12 @@ internal sealed partial class DirectorCreationRuntime
 {
     private GuiDialog? nativeAppearanceDialog;
     internal bool NativeAppearanceEditorOpen => nativeAppearanceDialog?.IsOpened() == true;
+    internal Guid AppearanceActor => NativeAppearanceEditorOpen ? appearanceActorId : Guid.Empty;
 
     internal void ClosePlayerInventory()
     {
+        appearanceActorId=Guid.Empty;
+        DisposeAppearanceEntity();
         nativeAppearanceDialog?.TryClose();
         nativeAppearanceDialog?.Dispose();
         nativeAppearanceDialog = null;
@@ -31,18 +34,11 @@ internal sealed partial class DirectorCreationRuntime
             ?? throw new InvalidOperationException(L("creation-native-hand-anchor-missing"));
         byte[] data = stack?.ToBytes() ?? [];
         string code = stack?.Collectible.Code?.ToString() ?? "";
-        Session.Edit(L("creation-apply-player-hand"), p =>
+        var attachment = project.Objects.FirstOrDefault(o => o.ParentId == actor.Id && o.ActorHand == hand)
+            ?? new CreationSceneObject { Name = anchorName, Kind = CreationObjectKind.Item, ParentId = actor.Id, ParentPartId = anchor.Id, ActorHand = hand };
+        if (attachment.ItemStackData.AsSpan().SequenceEqual(data) && attachment.ResourceCode == code && !attachment.UseRecordedHandItem) return;
+        Session.EditActorHand(L("creation-apply-player-hand"), actor.Id, attachment, attachment =>
         {
-            var attachment = p.Objects.FirstOrDefault(o => o.ParentId == actor.Id && o.ActorHand == hand);
-            if (attachment is null)
-            {
-                attachment = new CreationSceneObject
-                {
-                    Name = anchorName, Kind = CreationObjectKind.Item, ParentId = actor.Id,
-                    ParentPartId = anchor.Id, ActorHand = hand
-                };
-                p.Objects.Add(attachment);
-            }
             attachment.ResourceCode = code;
             attachment.ItemStackData = data;
             attachment.UseRecordedHandItem = false;
@@ -86,7 +82,8 @@ internal sealed partial class DirectorCreationRuntime
         if (properties?.Client?.Shape?.Base is not { } shapeCode) throw new InvalidDataException(L("creation-native-unavailable"));
         var location = shapeCode.Clone(); location.Path = "shapes/" + location.Path + ".json";
         string json = api.Assets.Get(location).ToText();
-        var imported = DirectorCreationShape.Import(json, entity?.GetName() ?? ActorName(properties.Code));
+        var imported = update is null ? DirectorCreationShape.Import(json, entity?.GetName() ?? ActorName(properties.Code))
+            : (Model: DirectorCreationShape.ImportGeometry(json, update.Name), Animations: new List<CreationAnimation>());
         var model = imported.Model;
         if (properties.Client.LoadedShapeForEntity is { } loadedShape)
         {
@@ -175,19 +172,12 @@ internal sealed partial class DirectorCreationRuntime
             if (update.ActorSource is { } originalSource) obj.ActorSource.SourceWorld = originalSource.SourceWorld;
             Guid editing = Session.AnimationObject == update.Id ? Session.EditingAnimation?.Id ?? Guid.Empty : Guid.Empty;
             double time = Session.EditTime;
-            Dictionary<Guid, Guid> actions = new();
-            Session.Edit(L("creation-apply-player-appearance"), p =>
-            {
-                actions = DirectorCreationAppearance.Apply(p, update, model);
-                update.ActorSource = obj.ActorSource;
-                p.Assets.AddRange(textureAssets);
-            });
+            var actions = Session.ReplaceActorAppearance(L("creation-apply-player-appearance"), update.Id, model, obj.ActorSource, textureAssets);
             if (actions.TryGetValue(editing, out var action))
             {
                 Session.EnterAnimation(action, update.Id);
                 Session.Seek(time);
             }
-            Renderer.ReloadTextures();
             return update;
         }
         Session.Edit(L("creation-native-add"), p => { p.Models.Add(model); p.Animations.AddRange(imported.Animations); p.Assets.AddRange(textureAssets); p.Objects.Add(obj); p.Objects.AddRange(attachments); });

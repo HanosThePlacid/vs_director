@@ -461,9 +461,9 @@ internal sealed partial class DirectorWorkspaceHud : GuiDialog
 
     public override bool DisableMouseGrab => !layout.NavigationMode && !(creationWorkspace?.Active == true && owner.Creation.ControllingActor);
 
-    public override bool ShouldReceiveKeyboardEvents() => IsOpened() && !layout.NavigationMode;
+    public override bool ShouldReceiveKeyboardEvents() => IsOpened() && !layout.NavigationMode && !(creationWorkspace?.Active == true && owner.Creation.NativeAppearanceEditorOpen);
 
-    public override bool ShouldReceiveMouseEvents() => IsOpened() && !layout.NavigationMode;
+    public override bool ShouldReceiveMouseEvents() => IsOpened() && !layout.NavigationMode && !(creationWorkspace?.Active == true && owner.Creation.NativeAppearanceEditorOpen);
 
     internal bool ShouldRouteFloatingEditorInput
         => !disposed && IsOpened() && !layout.NavigationMode;
@@ -1177,6 +1177,7 @@ internal sealed partial class DirectorWorkspaceHud : GuiDialog
 
     public override void OnMouseMove(MouseEvent args)
     {
+        if (creationWorkspace?.Active == true && owner.Creation.NativeAppearanceEditorOpen) return;
         if (creationWorkspace?.Active == true && owner.Creation.ControllingActor) return;
         if (creationWorkspace?.Active == true) { if (!replayViewportFreeCameraPointerActive) args.Handled = true; return; }
         CheckPaneSplitRelease();
@@ -1458,6 +1459,7 @@ internal sealed partial class DirectorWorkspaceHud : GuiDialog
 
     public override void OnMouseUp(MouseEvent args)
     {
+        if (creationWorkspace?.Active == true && owner.Creation.NativeAppearanceEditorOpen) return;
         if (creationWorkspace?.Active == true && owner.Creation.ControllingActor) return;
         if (creationWorkspace?.Active == true) { EndReplayViewportFreeCameraPointerInput(); args.Handled = true; return; }
         if (GuiElementDirectorNumberInput.Captured is { } number)
@@ -1776,6 +1778,7 @@ internal sealed partial class DirectorWorkspaceHud : GuiDialog
 
     public override void OnMouseWheel(MouseWheelEventArgs args)
     {
+        if (creationWorkspace?.Active == true && owner.Creation.NativeAppearanceEditorOpen) return;
         if (creationWorkspace?.Active == true && owner.Creation.ControllingActor) return;
         if (creationWorkspace?.Active == true) { args.SetHandled(); return; }
         if (args.IsHandled)

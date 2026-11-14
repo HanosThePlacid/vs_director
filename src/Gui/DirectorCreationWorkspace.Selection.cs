@@ -18,6 +18,14 @@ internal sealed partial class DirectorCreationWorkspace
         if (Session.SelectedObject != Guid.Empty && !selectedObjects.Contains(Session.SelectedObject))
         { selectedObjects.Clear(); selectedObjects.Add(Session.SelectedObject); }
         if (SelectedObject is null) { Session.SelectedObject = Session.SelectedPart = Guid.Empty; selectedObjects.Clear(); }
+        // Timeline rows can select an object without going through Select().
+        // Do not leave a camera in the previous actor's bone-editing scope.
+        if(SelectedObject is { Kind:CreationObjectKind.Camera })
+        {
+            if(Session.ScenePoseEditing)Session.EndScenePose();
+            if(!wholeObjectSelection||Session.SelectedPart!=Guid.Empty)
+            {wholeObjectSelection=true;Session.SelectedPart=Guid.Empty;selectedBones.Clear();RestoreTool(false);}
+        }
         if (!PosePicking && modelContext.Length == 0) Session.SelectedPart = Guid.Empty;
     }
     private void SelectObjectClick(CreationSceneObject obj, bool context = false)

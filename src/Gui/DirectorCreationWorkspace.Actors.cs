@@ -7,37 +7,6 @@ namespace VSDirector.Gui;
 internal sealed partial class DirectorCreationWorkspace
 {
     private double replayImportStart, replayImportEnd = 5;
-    private void DrawActorLibrary()
-    {
-        ImGui.SetNextItemWidth(-1); ImGui.InputTextWithHint("##actor-search", L("creation-search-names"), ref search, 256);
-        if (ImGui.CollapsingHeader(L("creation-world-actors"), ImGuiTreeNodeFlags.DefaultOpen))
-            foreach (var actor in Runtime.WorldActors().Where(a => search.Length == 0 || a.Name.Contains(search, StringComparison.OrdinalIgnoreCase)).Take(100))
-            {
-                if (ImGui.Selectable(actor.Name + "##world-" + actor.Id))
-                    Run(() => { Select(Runtime.AddNativeActor("", actor.Id)); auxiliary = ""; });
-                if (ImGui.BeginPopupContextItem("world-record-" + actor.Id))
-                { Item(L("creation-record-world-actor"), () => { Runtime.RecordWorldActor(actor.Id); auxiliary = ""; }); ImGui.EndPopup(); }
-            }
-        if (VSDirector.Replay.DirectorReplayRuntime.Manager is { IsPlaying: true } replay && ImGui.CollapsingHeader(L("creation-replay-actors"), ImGuiTreeNodeFlags.DefaultOpen))
-        {
-            float from = (float)replayImportStart, to = (float)replayImportEnd;
-            ImGui.SetNextItemWidth(-1); if (ImGui.DragFloat(L("creation-replay-start"), ref from, .1f, 0, (float)replay.PlaybackDurationSeconds)) replayImportStart = from;
-            ImGui.SetNextItemWidth(-1); if (ImGui.DragFloat(L("creation-replay-end"), ref to, .1f, 0, (float)replay.PlaybackDurationSeconds)) replayImportEnd = to;
-            foreach (var source in replay.ActorPathSources)
-                if (ImGui.Selectable(source.DisplayName + "##replay-" + source.ActorKey)) Run(() =>
-                {
-                    if (!replay.TryBuildAction(source.ActorKey, replayImportStart, replayImportEnd, source.DisplayName, out var action, out _, out var error)) throw new InvalidOperationException(error);
-                    var entity = replay.ResolveReplayActor(source.ActorKey, null, 0);
-                    var actor = Runtime.AddNativeActor(source.EntityCode, entity?.EntityId ?? 0); Select(actor);
-                    Runtime.ImportPerformance(action, actor.Id, Session.Time, owner.ActiveReplayId, backgroundStart: replayImportStart); auxiliary = "";
-                });
-        }
-        ImGui.SeparatorText(L("creation-native-actors"));
-        foreach (var actor in Runtime.ActorResources(search).Take(200))
-            if (ImGui.Selectable(actor.Name + "##native-" + actor.Code))
-                Run(() => { Select(Runtime.AddNativeActor(actor.Code)); auxiliary = ""; });
-    }
-
     private Guid ikUpper, ikLower;
     private string boneSearch = "";
     private void DrawActorRig(CreationSceneObject obj)
@@ -146,9 +115,11 @@ internal sealed partial class DirectorCreationWorkspace
         if (upper is null || lower is null || Session.Frame is not { } frame) throw new InvalidOperationException(L("creation-ik-invalid"));
         if (obj.IkChains.Any(c => c.Upper == upper.Id || c.Lower == lower.Id)) throw new InvalidOperationException(L("creation-ik-invalid"));
         var controls = DirectorCreationIk.CreateControls(obj, model, frame.Objects[obj.Id], upper, lower);
+        controls.Chain.Name=BoneName(model,upper)+" → "+BoneName(model,lower);
         controls.Target.Name = lower.Name + " · " + L("creation-ik-target");
         controls.Pole.Name = lower.Name + " · " + L("creation-ik-pole");
         Session.Edit(L("creation-ik-create"), p => { p.Objects.Add(controls.Target); p.Objects.Add(controls.Pole); obj.IkChains.Add(controls.Chain); });
+        ikPanel=true;focusRigPanel="ik";
     }
 
     private void BakeIk(CreationSceneObject obj)

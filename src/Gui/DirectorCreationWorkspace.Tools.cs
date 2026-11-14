@@ -59,7 +59,7 @@ internal sealed partial class DirectorCreationWorkspace
         if(actor.ModelId==Guid.Empty)return;
         if(Session.EditingAnimation is null || Session.AnimationObject!=actor.Id)Session.BeginScenePose(actor.Id);
         wholeObjectSelection=false;Session.SelectedObject=actor.Id;selectedObjects.Clear();selectedObjects.Add(actor.Id);
-        selectedBones.Clear();Session.SelectedPart=Guid.Empty;modelContext="";showBones=false;
+        selectedBones.Clear();Session.SelectedPart=Guid.Empty;modelContext="";
         if(part==Guid.Empty && Project!.Models.Find(m=>m.Id==actor.ModelId) is {} model)
             part=model.BodyMapping.GetValueOrDefault("body",model.Parts.FirstOrDefault()?.Id??Guid.Empty);
         if(part!=Guid.Empty)SelectBone(actor.Id,part);

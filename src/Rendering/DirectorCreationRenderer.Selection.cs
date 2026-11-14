@@ -19,10 +19,10 @@ internal sealed partial class DirectorCreationRenderer
     // Submitted as a clipped ImGui image rather than a world post-process:
     // editor highlights stay behind dialogs and never enter previews/exports.
     internal int PoseSelectionTexture(CreationModel model, CreationObjectState state,
-        Guid selected, Guid hovered, float[] view, float[] projection, Vector2 size, float scale)
+        Guid selected, Guid hovered, float[] view, float[] projection, Vector2 size, float scale, bool wholeActor = false)
     {
         if (api is null || !Visible || !state.Visible || state.Source.Opacity < .01
-            || session.Project is not { } project || selected == Guid.Empty && hovered == Guid.Empty) return 0;
+            || session.Project is not { } project || !wholeActor && selected == Guid.Empty && hovered == Guid.Empty) return 0;
         if (!project.Visuals.World.ShowEntities || !project.Visuals.World.ShowPlayers
             && state.Source.ActorSource?.EntityCode.Contains("player", StringComparison.OrdinalIgnoreCase) == true) return 0;
         int width = Math.Clamp((int)MathF.Ceiling(size.X), 1, 8192), height = Math.Clamp((int)MathF.Ceiling(size.Y), 1, 8192);
@@ -38,9 +38,9 @@ internal sealed partial class DirectorCreationRenderer
             selectionMaskShader!.Use();
             selectionMaskShader.UniformMatrix("viewMatrix", view);
             selectionMaskShader.UniformMatrix("projectionMatrix", projection);
-            var targets=SemanticTargets??DirectorCreationRigSelection.Targets(project,model);
-            var selectedParts = SelectionBranch(targets,selected);
-            foreach(var id in AdditionalSelectedParts??System.Array.Empty<Guid>())selectedParts.UnionWith(SelectionBranch(targets,id));
+            var targets=wholeActor ? new Dictionary<Guid,Guid>() : SemanticTargets??DirectorCreationRigSelection.Targets(project,model);
+            var selectedParts = wholeActor ? model.Parts.Select(p=>p.Id).ToHashSet() : SelectionBranch(targets,selected);
+            if(!wholeActor)foreach(var id in AdditionalSelectedParts??System.Array.Empty<Guid>())selectedParts.UnionWith(SelectionBranch(targets,id));
             var hoveredParts = SelectionBranch(targets,hovered == selected ? Guid.Empty : hovered);
             var deformations = DirectorCreationJointSeams.Deformations(model, state);
             foreach (var part in model.Parts.Where(p => !p.Group && p.Visible && !state.HiddenParts.Contains(p.Id)))

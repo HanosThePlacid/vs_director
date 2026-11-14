@@ -8,6 +8,17 @@ public sealed record CreationProjectEntry(Guid Id, string Name, string Folder, D
 /// <summary>Independent project storage; replay files and workspace settings are never rewritten.</summary>
 public sealed class DirectorCreationStore
 {
+    private readonly object listingLock = new();
+    private readonly Dictionary<string,(long Length,DateTime Written,ProjectSummary Summary)> listingCache = new();
+    private sealed class ProjectSummary
+    {
+        public int SchemaVersion { get; set; } = DirectorCreationProject.CurrentSchemaVersion;
+        public string Name { get; set; } = "New film";
+        public string Folder { get; set; } = "";
+        public string WorldId { get; set; } = "";
+        public int Dimension { get; set; }
+        public DateTimeOffset ModifiedUtc { get; set; }
+    }
     private readonly Dictionary<(Guid Project, string Source), string> performanceErrors = new();
     public string? PerformanceError(DirectorCreationProject project, string source)
         => performanceErrors.GetValueOrDefault((project.Id, source));
@@ -42,19 +53,38 @@ public sealed class DirectorCreationStore
     }
     public IReadOnlyList<CreationProjectEntry> List()
     {
+        lock(listingLock)return ListSummaries();
+    }
+    private IReadOnlyList<CreationProjectEntry> ListSummaries()
+    {
         var entries = new List<CreationProjectEntry>();
+        var found = new HashSet<string>();
         foreach (string directory in Directory.EnumerateDirectories(Root))
         {
             if (!Guid.TryParse(Path.GetFileName(directory), out Guid id)) continue;
             string path = Path.Combine(directory, "project.json"), recovery = Path.Combine(directory, "recovery.json");
             try
             {
-                var project = Read(File.Exists(path) ? path : recovery);
+                var file = new FileInfo(File.Exists(path) ? path : recovery);
+                found.Add(file.FullName);
+                if(!listingCache.TryGetValue(file.FullName,out var cached) || cached.Length!=file.Length || cached.Written!=file.LastWriteTimeUtc)
+                {
+                    // Listing never constructs model/animation graphs or runs the
+                    // full document validator. Opening still validates everything.
+                    using var stream=new FileStream(file.FullName,FileMode.Open,FileAccess.Read,FileShare.ReadWrite|FileShare.Delete);
+                    var summary=JsonSerializer.Deserialize<ProjectSummary>(stream,CreationJson.Options)
+                        ??throw new InvalidDataException("Empty project.");
+                    if(summary.SchemaVersion is <1 or >DirectorCreationProject.CurrentSchemaVersion || summary.Name is null || summary.Folder is null || summary.WorldId is null)
+                        throw new InvalidDataException("Invalid project summary.");
+                    cached=(file.Length,file.LastWriteTimeUtc,summary);listingCache[file.FullName]=cached;
+                }
+                var project = cached.Summary;
                 entries.Add(new(id, project.Name, project.Folder, project.ModifiedUtc,
                     File.Exists(recovery) && (!File.Exists(path) || File.GetLastWriteTimeUtc(recovery) >= File.GetLastWriteTimeUtc(path)), project.WorldId, project.Dimension));
             }
-            catch (Exception e) when (e is IOException or JsonException or InvalidDataException or ArgumentException) { /* Other projects remain accessible. */ }
+            catch (Exception e) when (e is IOException or JsonException or InvalidDataException or ArgumentException or UnauthorizedAccessException) { /* Other projects remain accessible. */ }
         }
+        foreach(string key in listingCache.Keys.Where(k=>!found.Contains(k)).ToArray())listingCache.Remove(key);
         return entries.OrderByDescending(e => e.ModifiedUtc).ToArray();
     }
     public DirectorCreationProject Load(Guid id, bool recover = false)
@@ -135,20 +165,6 @@ public sealed class DirectorCreationStore
         }
         LoadPerformances(copy, all: true); Save(copy); return copy;
     }
-    public DirectorCreationProject CopyToWorld(DirectorCreationProject source, string worldId, int dimension)
-    {
-        if (string.IsNullOrWhiteSpace(worldId)) throw new ArgumentException("A destination world is required.", nameof(worldId));
-        var copy = Duplicate(source);
-        copy.WorldId = worldId; copy.Dimension = dimension;
-        // Keep motion, poses and local recording files, but do not apply another
-        // world's block history or bind actors to live players on opening.
-        copy.SetBackground(Guid.Empty); copy.UsePerformanceWorld = false;
-        foreach (var actor in copy.Objects) actor.ReplacePlayerUid = "";
-        foreach (var preset in copy.Presets)
-            if (preset.Appearance is { } appearance) appearance.ReplacePlayerUid = "";
-        Save(copy);
-        return copy;
-    }
     public void Delete(Guid id)
     {
         // Move to a local trash directory so an accidental deletion can be recovered.
@@ -182,6 +198,7 @@ public sealed partial class DirectorCreationSession
     public void ClearTransformDrafts() { ResetPoseDraft(); drafts.Clear(); draftChannels.Clear(); propertyDrafts.Clear(); Refresh(); }
 
     private DirectorCreationProject? gesture;
+    private bool poseOnlyGesture;
     private long gestureRevision;
     private CreationClip? clipGesture;
     private double clipGestureDuration, clipGestureLoopEnd;
@@ -198,6 +215,7 @@ public sealed partial class DirectorCreationSession
         DocumentGeneration++;
         StopRecording();
         if (Project is not null && Dirty) Save();
+        poseOnlyGesture = false;
         ScenePoseActor=Guid.Empty; ResetPoseDraft(); project.Validate(); Project = project; History.Clear(); SelectedObject = SelectedPart = SelectedAnimation = Guid.Empty;
         Time = 0; Playing = Recording = Dirty = ExternalRecording = false; EditTask = CreationEditTask.Placement; AutoKey = true; AnimationTime = 0; AnimationObject = Guid.Empty; gesture = null; clipGesture = null; drafts.Clear(); draftChannels.Clear(); propertyDrafts.Clear(); Revision++; Refresh();
         RestorePoseRecovery(project.PoseRecovery); project.PoseRecovery = null;
@@ -214,12 +232,14 @@ public sealed partial class DirectorCreationSession
     private Dictionary<(Guid Object,Guid Part),CreationTransform>? gestureDrafts;
     private Dictionary<(Guid Object,Guid Part),HashSet<CreationChannel>>? gestureChannels;
     private Dictionary<(Guid Object,Guid Part,CreationChannel Channel),CreationVector>? gestureProperties;
-    public void BeginGesture()
+    public void BeginGesture(bool poseOnly = false)
     {
         BeginPoseGesture();
+        if (poseOnlyGesture) return;
         if (gesture is null && clipGesture is null && Project is not null)
         {
-            gesture = Project.Clone(); gestureRevision = Revision;
+            if (poseOnly && PoseEditing) poseOnlyGesture = true;
+            else { gesture = Project.Clone(); gestureRevision = Revision; }
             gestureDrafts=drafts.ToDictionary(p=>p.Key,p=>p.Value with{});
             gestureChannels=draftChannels.ToDictionary(p=>p.Key,p=>new HashSet<CreationChannel>(p.Value));
             gestureProperties=new(propertyDrafts);
@@ -228,6 +248,21 @@ public sealed partial class DirectorCreationSession
     public void EndGesture(string label)
     {
         gestureDrafts=null;gestureChannels=null;gestureProperties=null;
+        if (poseOnlyGesture)
+        {
+            // Avoid cloning/serializing unrelated models and hundreds of thousands
+            // of imported animation keys when the mouse is released.
+            if (AutoKey && PoseChanged())
+            {
+                var poseBefore = CreationPoseHistoryState.Capture(Project!, PoseActor, ScenePoseEditing ? Guid.Empty : SelectedAnimation);
+                CommitAutoPose();
+                History.RecordPose(poseBefore, label);
+            }
+            else if (AutoKey) ResetPoseDraft();
+            EndPoseGesture();
+            poseOnlyGesture = false;
+            return;
+        }
         CommitAutoPose();
         bool poseChanged = EndPoseGesture();
         if (clipGesture is { } before && Project is not null)
@@ -275,7 +310,7 @@ public sealed partial class DirectorCreationSession
         }
         sinceSave += delta;
         if (recoverySave?.IsCompleted == true) FlushRecovery();
-        if (Dirty && gesture is null && clipGesture is null && !ExternalRecording && sinceSave >= 30 && recoverySave is null)
+        if (Dirty && gesture is null && clipGesture is null && !poseOnlyGesture && !ExternalRecording && sinceSave >= 30 && recoverySave is null)
         {
             var snapshot = Project.Clone();
             snapshot.PoseRecovery = poseDraft is null ? null : CreationJson.Clone(poseDraft);
@@ -320,13 +355,8 @@ public sealed partial class DirectorCreationSession
         if (recorded.Count > 0 && Time - recorded[^1].Time < 1d / 30) return;
         var transform = obj.Transform with { Position = absolutePosition - Project.Origin, Rotation = rotation };
         Matrix4x4 local = transform.Matrix();
-        if (Frame.Objects.TryGetValue(obj.ParentId, out var parent))
-        {
-            Matrix4x4 parentWorld = parent.World;
-            if (obj.ParentPartId != Guid.Empty && parent.Bones.TryGetValue(obj.ParentPartId, out var bone)) parentWorld = bone * parentWorld;
-            if (!Matrix4x4.Invert(parentWorld, out var inverse)) throw new InvalidDataException("父对象缩放为零，无法录制表演。");
-            local *= inverse;
-        }
+        if (!Matrix4x4.Invert(DirectorCreationParenting.Space(Frame, obj), out var inverse)) throw new InvalidDataException("父对象缩放为零，无法录制表演。");
+        local *= inverse;
         var pose = DirectorCreationMath.FromMatrix(local, recorded.Count > 0 ? recorded[^1].Rotation : obj.Transform.Rotation);
         // FromMatrix returns the affine translation; remove the pivot contribution.
         var linear = local; linear.Translation = Vector3.Zero;

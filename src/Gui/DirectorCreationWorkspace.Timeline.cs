@@ -24,7 +24,7 @@ internal sealed partial class DirectorCreationWorkspace
         timelineZoom = Math.Clamp(timelineZoom * factor, .05, 256);
         timelineStart = Math.Clamp(timelineStart + (before - duration / timelineZoom) * Math.Clamp(anchor, 0, 1), 0, Math.Max(0, duration - duration / timelineZoom));
     }
-    private Guid draggedKey, draggedClip;
+    private Guid draggedKey, draggedClip, draggedParticle;
     private int clipEdge, curveHandle;
     private double dragTime, dragStart, dragDuration, dragSource;
     private double draggedKeyStart, timelineDragOrigin = double.NaN, timelineDragTarget = double.NaN;
@@ -332,7 +332,7 @@ internal sealed partial class DirectorCreationWorkspace
             }
             if (SelectedAnimation is null)
             {
-                foreach (var obj in p.Objects.Where(o=>!IsIkControl(o.Id) && (!selectedTracksOnly||ObjectSelected(o.Id))).ToArray())
+                foreach (var obj in p.Objects.Where(o=>!IsIkControl(o.Id) && ShowAttachment(o) && (!selectedTracksOnly||ObjectSelected(o.Id))).ToArray())
                 {
                     ImGui.PushID(obj.Id.ToString());
                     Vector2 row = ImGui.GetCursorScreenPos();
@@ -354,6 +354,7 @@ internal sealed partial class DirectorCreationWorkspace
                     if (rowName != ObjectName(obj)) rowName += "…";
                     draw.AddText(new(row.X + 30 * scale, textY), DirectorImGuiTheme.Text, rowName);
                     draw.PopClipRect();
+                    if(obj.Kind==CreationObjectKind.Particle)DrawParticleTimelineBar(obj,row,x0,rightEdge,rowHeight,scale,X,T);
                     if (ImGui.BeginPopupContextItem("timeline-object")) { if(ImGui.MenuItem(L("creation-pin-tracks"),"",pinnedTimelineObjects.Contains(obj.Id))) { if(!pinnedTimelineObjects.Add(obj.Id))pinnedTimelineObjects.Remove(obj.Id); } DrawObjectContext(obj); ImGui.EndPopup(); }
                     if (expanded)
                     {
@@ -411,7 +412,39 @@ internal sealed partial class DirectorCreationWorkspace
         if (ImGui.IsMouseReleased(ImGuiMouseButton.Left) && (draggedKey != Guid.Empty || draggedClip != Guid.Empty))
         { if(draggedKey!=Guid.Empty)FinishKeyMove();else Session.EndGesture(L("creation-move-keyframe-clip")); draggedKey = draggedClip = Guid.Empty; }
 
+        if(ImGui.IsMouseReleased(ImGuiMouseButton.Left)&&draggedParticle!=Guid.Empty)
+        {Session.EndGesture(L("creation-particle-emission"));draggedParticle=Guid.Empty;}
         DrawTimelineEditor();
+    }
+    private void DrawParticleTimelineBar(CreationSceneObject obj,Vector2 row,float left,float right,float height,float scale,Func<double,float> x,Func<float,double> time)
+    {
+        var draw=ImGui.GetWindowDrawList();
+        Vector2 min=new(x(obj.ParticleStart),row.Y+4*scale),max=new(Math.Max(min.X+6*scale,x(obj.ParticleStart+obj.ParticleDuration)),row.Y+height-4*scale);
+        draw.PushClipRect(new(left,row.Y),new(right,row.Y+height),true);
+        draw.AddRectFilled(min,max,0xff927c42,3);
+        draw.AddLine(min,new(min.X,max.Y),0xffffffff,2*scale);
+        draw.AddLine(new(max.X,min.Y),max,0xffffffff,2*scale);
+        draw.PopClipRect();
+        var io=ImGui.GetIO();
+        // The object-row button owns the active click. Reuse its hit test so
+        // ImGui's active-item window guard cannot swallow the first bar click.
+        bool hovered=ImGui.IsItemHovered()&&io.MousePos.X>=left&&io.MousePos.X<=right&&ImGui.IsMouseHoveringRect(min,max);
+        if(hovered)ImGui.SetTooltip(L("creation-particle-timeline-hint"));
+        if(hovered&&ImGui.IsMouseClicked(ImGuiMouseButton.Left)&&!Session.HasTransformDraft)
+        {
+            Select(obj);Session.BeginGesture();draggedParticle=obj.Id;
+            dragTime=time(io.MousePos.X);dragStart=obj.ParticleStart;dragDuration=obj.ParticleDuration;
+            clipEdge=Math.Abs(io.MousePos.X-min.X)<8*scale?-1:Math.Abs(io.MousePos.X-max.X)<8*scale?1:0;
+        }
+        if(draggedParticle!=obj.Id||!ImGui.IsMouseDragging(ImGuiMouseButton.Left))return;
+        double offset=time(io.MousePos.X)-dragTime;
+        var before=(obj.ParticleStart,obj.ParticleDuration);
+        if(clipEdge==0)obj.ParticleStart=Math.Clamp(Snap(dragStart+offset),0,86400-obj.ParticleDuration);
+        else if(clipEdge>0)obj.ParticleDuration=Math.Clamp(Snap(dragDuration+offset),0,86400-obj.ParticleStart);
+        else
+        {double start=Math.Clamp(Snap(dragStart+offset),0,dragStart+dragDuration);obj.ParticleStart=start;obj.ParticleDuration=dragStart+dragDuration-start;}
+        if(before!=(obj.ParticleStart,obj.ParticleDuration))Session.Changed();
+        TimelineDrag(clipEdge>0?dragStart+dragDuration:dragStart,clipEdge>0?obj.ParticleStart+obj.ParticleDuration:obj.ParticleStart);
     }
     private void DrawTimelineEditor()
     {
