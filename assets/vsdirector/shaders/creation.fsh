@@ -35,7 +35,7 @@ void main() {
     float shade = surfaceShading != 0 ? max(0.45, 0.5 + 0.5 * dot(normal, direction)) : 1.0;
     if (surfaceShading != 0) shade = max(shade, max(0.0, normal.y) * 0.95);
     float emission = clamp(glow, 0.0, 1.0);
-    vec3 lighting = mix(max(vertexColorMode != 0 ? particleLight : worldLight, vec3(0.0)) * shade, vec3(1.0), emission);
+    vec3 lighting = mix(max(vertexColorMode == 1 ? particleLight : worldLight, vec3(0.0)) * shade, vec3(1.0), emission);
     float fog = clamp(1.0 - exp(-length(eyePosition) * max(0.0, fogDensity)) + fogMinimum, 0.0, 1.0);
     outColor = vec4(mix(color.rgb * lighting, fogColor.rgb, fog), color.a);
     // The world framebuffer has a separate bloom attachment. Leaving it

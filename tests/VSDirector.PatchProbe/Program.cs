@@ -21,6 +21,7 @@ using ProtoBuf;
 
 const string harmonyId = "vscn.vsdirector.patch-probe";
 DirectorAdvancedParticleChecks.Run();
+DirectorBlueprintChecks.Run();
 DirectorPerformanceChecks.Run();
 DirectorCreationRecordingChecks.Run();
 Harmony harmony = new(harmonyId);

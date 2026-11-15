@@ -16,12 +16,13 @@ internal sealed partial class DirectorCreationWorkspace
         if(!Active)
         {
             if(browser)ShowCreationPanel("browser");
+            if(contentPanel)ShowCreationPanel("content");
             if(properties)ShowCreationPanel("properties");
             if(timeline)ShowCreationPanel("timeline");
         }
         Active = true; host.SetCreationMode(true); Runtime.NewProjectDefaults=editorPreferences.Defaults;Runtime.Guides=editorPreferences.Guides; Runtime.Enabled = Project is not null; }
     internal void Exit()
-    { PersistEditorPreferences(); ClearParticlePreviews(); ClearActorPickerPreviews(); Runtime.ClosePlayerInventory(); Runtime.Suspend(); Active = false; host.CreationPreviewVisible = false; host.SetCreationMode(false); }
+    { CancelBlueprintCapture();CloseProjection();ClearBlueprintCards(); PersistEditorPreferences(); ClearParticlePreviews(); ClearActorPickerPreviews(); Runtime.ClosePlayerInventory(); Runtime.Suspend(); Active = false; host.CreationPreviewVisible = false; host.SetCreationMode(false); }
     internal void RequestLeave()
     {
         if (pendingTransition is not null) return;
@@ -30,6 +31,9 @@ internal sealed partial class DirectorCreationWorkspace
     }
     internal void RequestEscape()
     {
+        if(projectionDragCells is not null){Session.CancelGesture();projectionDragCells=null;gizmoUsing=false;handleAxis=handleHover=-1;return;}
+        if(projectionScene is not null){CloseProjection();return;}
+        if(blueprintCapturing){CancelBlueprintCapture();return;}
         if (Runtime.NativeAppearanceEditorOpen) { Runtime.ClosePlayerInventory(); return; }
         if(gizmoUsing || draggedKey!=Guid.Empty || draggedClip!=Guid.Empty || draggedParticle!=Guid.Empty || scenePoseDrag!=Guid.Empty || draggingPose is not null)
         { Session.CancelGesture();gizmoUsing=false;handleAxis=-1;draggedKey=draggedClip=draggedParticle=scenePoseDrag=Guid.Empty;draggingPose=null;return; }
@@ -131,12 +135,12 @@ internal sealed partial class DirectorCreationWorkspace
                 new("export", L("creation-export-menu"), () => auxiliary = "output", Project is not null && Runtime.ProjectWorldMatches)
             };
             ImGui.BeginDisabled(Runtime.PerformanceActive);
-            float progressWidth=ShowParticleToolbarProgress?Math.Min(120*DirectorImGuiTheme.Scale,ImGui.GetContentRegionAvail().X*.25f):0;
+            float progressWidth=(projectionExport is not null||Runtime.ProjectionRebuilding||ShowParticleToolbarProgress)?Math.Min(120*DirectorImGuiTheme.Scale,ImGui.GetContentRegionAvail().X*.25f):0;
             var toolbar=DirectorWorkspaceMenus.Toolbar(commands);
             toolbar.ToolbarRightReserve=progressWidth>0?progressWidth+ImGui.GetStyle().ItemSpacing.X:0;
             toolbar.Draw();
             ImGui.EndDisabled();
-            DrawParticleToolbarProgress(progressWidth);
+            if(projectionExport is not null||Runtime.ProjectionRebuilding)DrawProjectionProgress(progressWidth);else DrawParticleToolbarProgress(progressWidth);
         }
         finally { ImGui.EndChild(); }
     }
@@ -149,11 +153,13 @@ internal sealed partial class DirectorCreationWorkspace
     {
         if (auxiliary != "particles") ClearParticlePreviews();
         if (auxiliary != "actors") ClearActorPickerPreviews();
+        if (auxiliary != "projections") {ClearBlueprintCards();pendingBlueprint=null;}
+        if (auxiliary != "particles") {projectionParticleParent=Guid.Empty;projectionSchemeTarget=Guid.Empty;}
         if (auxiliary.Length == 0) return;
         if (!Runtime.ProjectWorldMatches && auxiliary != "projects") auxiliary = "projects";
         bool open = true;
-        string title = auxiliary switch { "particles" => L("creation-particle-picker"), "actors" => L("creation-actor-picker"), "resources" => L("creation-resources"), "presets" => L("creation-presets"), "projects" => L("creation-projects"), "output" => L("creation-export-menu"), _ => L("creation-project-settings") };
-        bool fullPicker = auxiliary is "particles" or "actors";
+        string title = auxiliary switch { "projections" => L("projection-picker"), "particles" => L("creation-particle-picker"), "actors" => L("creation-actor-picker"), "resources" => L("creation-resources"), "presets" => L("creation-presets"), "projects" => L("creation-projects"), "output" => L("creation-export-menu"), _ => L("creation-project-settings") };
+        bool fullPicker = auxiliary is "particles" or "actors" or "projections";
         if(fullPicker)
         {
             var viewport = ImGui.GetMainViewport();
@@ -175,6 +181,7 @@ internal sealed partial class DirectorCreationWorkspace
             }
             else if (auxiliary == "actors") DrawActorLibrary();
             else if (auxiliary == "particles") DrawParticleResources();
+            else if (auxiliary == "projections") DrawBlueprintPicker();
             else DrawProjectSettings(auxiliary == "output");
             ImGui.EndDisabled();
             if (Runtime.Exporting && Button(L("creation-cancel-export"))) Runtime.CancelExport();

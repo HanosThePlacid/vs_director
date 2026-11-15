@@ -148,6 +148,7 @@ internal sealed partial class DirectorCreationWorkspace
     private void DrawProperties()
     {
         if (Project is null) return;
+        if(projectionScene is not null&&Session.SelectedObject==projectionObject){DrawProjectionProperties();return;}
         if (modelContext.Length > 0) { Hint(L("creation-shared-model")); DrawModelProperties(); return; }
         if(IsIkControl(Session.SelectedObject)) { DrawPoseInspector(true);return; }
         if(PosePicking && RigActor is not null) { DrawPoseInspector(false);return; }
@@ -287,23 +288,26 @@ internal sealed partial class DirectorCreationWorkspace
     {
         if (Project is not { } project) return;
         if ((SelectedObject ?? RigActor) is not { } obj) { Hint(L("creation-no-selection")); return; }
-        DrawEditingContext();
+        var evaluated = Session.Frame?.Objects.GetValueOrDefault(obj.Id);
+        if(!drawingContentInspector)DrawEditingContext();
+        if(ObjectSectionVisible("transform"))
+        {
         TextField(L("creation-name"), obj.Name, v => obj.Name = v);
         Hint(L("creation-object-transform"));
         ImGui.BeginDisabled(PartScope);
         DrawRigTransform(obj, Guid.Empty);
         ImGui.EndDisabled();
-        var evaluated = Session.Frame?.Objects.GetValueOrDefault(obj.Id);
         bool visible = Session.AnimationEditing ? evaluated?.Visible ?? obj.Visible : obj.Visible;
         Toggle(L("creation-visible"), visible, v => Session.SetProperty(obj.Id, Guid.Empty, CreationChannel.Visible, new(v ? 1 : 0, 0, 0), () => obj.Visible = v));
-        if (obj.Kind == CreationObjectKind.Model)
+        }
+        if (ObjectSectionVisible("type") && obj.Kind == CreationObjectKind.Model)
         {
             DrawActorActionPicker(obj);
             DrawActorRig(obj);
             if (Button(L("creation-edit-selected-model"))) Continue(() => { Session.LeaveAnimation(); Session.SelectedObject = obj.Id; Session.SelectedPart = Guid.Empty; modelId = obj.ModelId; modelContext = "model"; });
             if (Button(L("creation-apply-preset"))) Continue(() => { Session.SelectedObject = obj.Id; Session.SelectedPart = Guid.Empty; auxiliary = "presets"; });
         }
-        if (Header(L("creation-appearance")))
+        if (ObjectSectionVisible("appearance") && Header(L("creation-appearance")))
         {
         Vector3 color = (Session.AnimationEditing ? evaluated?.Color ?? obj.Color : obj.Color).Float();
         ImGui.TextUnformatted(L("creation-color")); ImGui.SetNextItemWidth(Math.Max(1,ImGui.GetContentRegionAvail().X-ImGui.GetFrameHeight()-ImGui.GetStyle().ItemSpacing.X));
@@ -312,7 +316,7 @@ internal sealed partial class DirectorCreationWorkspace
         if(ImGui.IsItemHovered())ImGui.SetTooltip(L("creation-color-keyframe"));
         Number(L("creation-opacity"), obj.Opacity, v => obj.Opacity = v, 0, 1, .01f); Number(L("creation-glow"), obj.Glow, v => obj.Glow = v, 0, 1, .01f);
         }
-        if (Header(L("creation-group-target-binding")))
+        if (ObjectSectionVisible("binding") && Header(L("creation-group-target-binding")))
         {
             if (Combo(L("creation-parent-object"), project.Objects.Find(o => o.Id == obj.ParentId)?.Name ?? L("creation-world")))
             {
@@ -335,6 +339,11 @@ internal sealed partial class DirectorCreationWorkspace
                 foreach (var other in project.Objects.Where(o => o.Id != obj.Id)) if (ImGui.Selectable(other.Name + "##" + other.Id)) Session.Edit(L("creation-set-target"), _ => obj.TargetId = other.Id);
                 ImGui.EndCombo();
             }
+        }
+        if(!ObjectSectionVisible("type"))
+        {
+            if(drawingContentInspector && contentView.Section=="object.transform" && obj.Projection is not null)DrawBlueprintTransforms(obj);
+            return;
         }
         if (obj.Kind == CreationObjectKind.Camera)
         {
@@ -361,7 +370,8 @@ internal sealed partial class DirectorCreationWorkspace
         }
         if (obj.Kind == CreationObjectKind.Particle)
         {
-            if(Button(L("creation-particle-editor"))) { particlesPanel=true;focusParticles=true; }
+            DrawProjectionParticleSource(obj);
+            if(Button(L("creation-particle-editor")))NavigateContent("p.overview");
         }
         if (obj.Kind == CreationObjectKind.Item)
         {
@@ -375,7 +385,8 @@ internal sealed partial class DirectorCreationWorkspace
             }
             Hint(L("creation-use-game-item-or-block-codes-meshes-use-the-game-s-textures"));
         }
-        if (obj.Kind == CreationObjectKind.Structure)
+        if(obj.Projection is not null)DrawBlueprintProperties(obj);
+        if (obj.Kind == CreationObjectKind.Structure && obj.Projection is null)
         {
             ImGui.TextWrapped(L("creation-structure-block-count", obj.Blocks.Count));
             if (Button(L("creation-capture-new-structure"))) Run(() => { structureFirst = Runtime.SelectedBlock(); structureCapture = true; });

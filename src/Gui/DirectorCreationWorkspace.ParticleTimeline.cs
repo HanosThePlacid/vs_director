@@ -25,7 +25,7 @@ internal sealed partial class DirectorCreationWorkspace
             draw.PopClipRect();
             if(ImGui.IsItemClicked())
             {
-                Select(obj);particleEmitter=node.Id;particlesPanel=true;focusParticles=true;
+                Select(obj);NavigateContent("p.emission",node.Id);
                 if(ImGui.GetIO().MousePos.X>=Math.Max(start,x0+labelWidth)&&ImGui.GetIO().MousePos.X<=end)
                 {Session.BeginGesture();particleTimeDrag=node.Id;particleTimeStart=node.Start;particleTimeDuration=node.Duration;particleTimeMouse=time(ImGui.GetIO().MousePos.X);particleTimeEdge=Math.Abs(ImGui.GetIO().MousePos.X-end)<8?1:Math.Abs(ImGui.GetIO().MousePos.X-start)<8?-1:0;}
             }
@@ -47,7 +47,7 @@ internal sealed partial class DirectorCreationWorkspace
                 foreach(var key in driver.Curve.Points)
                 {
                     var center=new Vector2(x(key.Time+offset),row.Y+rowHeight/2);draw.AddQuadFilled(center+new Vector2(0,-4),center+new Vector2(4,0),center+new Vector2(0,4),center+new Vector2(-4,0),0xff66ccff);
-                    if(ImGui.IsItemClicked()&&Vector2.Distance(ImGui.GetIO().MousePos,center)<10){Select(obj);particleEmitter=node.Id;particleDriver=parameter;particleKeyDrag=key;Session.BeginGesture();}
+                    if(ImGui.IsItemClicked()&&Vector2.Distance(ImGui.GetIO().MousePos,center)<10){Select(obj);NavigateContent("p.drivers",node.Id);particleDriver=parameter;particleKeyDrag=key;Session.BeginGesture();}
                 }
                 draw.PopClipRect();
                 if(particleKeyDrag is {} dragged&&driver.Curve.Points.Contains(dragged)&&ImGui.IsMouseDragging(ImGuiMouseButton.Left))
@@ -55,7 +55,7 @@ internal sealed partial class DirectorCreationWorkspace
                 if(ImGui.BeginPopupContextItem("particle-key-menu"))
                 {
                     if(ImGui.MenuItem(P("add-key")))Session.Edit(P("add-key"),_=>{double t=Math.Max(0,Session.Time-offset);if(driver.Curve.Points.All(k=>Math.Abs(k.Time-t)>.001)){double value=driver.Curve.Sample(t);driver.Curve.Points.Add(new(){Time=t,Value=value});driver.Curve.Points.Sort((a,b)=>a.Time.CompareTo(b.Time));}});
-                    if(ImGui.MenuItem(P("edit-curve"))){particleEmitter=node.Id;particleDriver=parameter;particleCurveOpen=true;}
+                    if(ImGui.MenuItem(P("edit-curve"))){Select(obj);NavigateContent("p.drivers",node.Id);particleDriver=parameter;particleCurveOpen=true;}
                     ImGui.EndPopup();
                 }
                 ImGui.PopID();

@@ -19,6 +19,7 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <Reference Include="Newtonsoft.Json" HintPath="$(VintageStoryPath)\Lib\Newtonsoft.Json.dll" Private="false" />
     <Reference Include="OpenTK.Mathematics" HintPath="$(VintageStoryPath)\Lib\OpenTK.Mathematics.dll" Private="false" />
     <Reference Include="OpenTK.Graphics" HintPath="$(VintageStoryPath)\Lib\OpenTK.Graphics.dll" Private="false" />
     <Reference Include="VSImGui" HintPath="$(VSImGuiPath)\VSImGui.dll" Private="false" />

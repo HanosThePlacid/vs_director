@@ -148,6 +148,30 @@ internal static partial class DirectorImGuiProbe
             if(first[3]!=0)throw new Exception("Actor preview background is not transparent");
             AccessTools.Method(type,"Render").Invoke(renderer,[3d,1f]);
             if(first.SequenceEqual(Read()))throw new Exception("Actor preview did not rotate");
+            var partType=assembly.GetType("VSDirector.Blueprints.BlueprintMeshPart",true)!;
+            using var part=(IDisposable)Activator.CreateInstance(partType,[mesh,false])!;
+            var parts=Array.CreateInstance(partType,1);parts.SetValue(part,0);
+            var projectionView=new VSDirector.Data.CreationProjectionView{Yaw=0,Pitch=0,Duration=2};
+            AccessTools.Field(type,"ProjectionView").SetValue(renderer,projectionView);
+            AccessTools.Method(type,"SetProjection").Invoke(renderer,[parts,System.Numerics.Matrix4x4.Identity]);
+            AccessTools.Method(type,"SetSize").Invoke(renderer,[128,96]);
+            byte[] ProjectionPixels(double time)
+            {
+                AccessTools.Method(type,"Render").Invoke(renderer,[time,128f/96]);
+                return (byte[])AccessTools.Method(type,"ReadRgba").Invoke(renderer,null)!;
+            }
+            var projectionStart=ProjectionPixels(0);
+            if(projectionStart.Length!=128*96*4||projectionStart[3]!=0)throw new Exception("Projection dimensions or transparent background are wrong");
+            if(!projectionStart.SequenceEqual(ProjectionPixels(2)))throw new Exception("Projection full turn did not return to the same image");
+            if(projectionStart.SequenceEqual(ProjectionPixels(.5)))throw new Exception("Projection automatic rotation did not change image");
+            projectionView.Transparent=false;projectionView.Background=new(.2,.3,.4);
+            var background=ProjectionPixels(0);
+            if(background[3]!=255||Math.Abs(background[0]-51)>1||Math.Abs(background[1]-77)>1)throw new Exception("Projection background color/alpha are wrong");
+            var oldCenter=AccessTools.Field(type,"projectionCenter").GetValue(renderer);var oldRadius=AccessTools.Field(type,"projectionRadius").GetValue(renderer);
+            AccessTools.Field(type,"LockProjectionBounds").SetValue(renderer,true);
+            AccessTools.Method(type,"SetProjection").Invoke(renderer,[Array.CreateInstance(partType,0),System.Numerics.Matrix4x4.Identity]);
+            if(!Equals(oldCenter,AccessTools.Field(type,"projectionCenter").GetValue(renderer))||!Equals(oldRadius,AccessTools.Field(type,"projectionRadius").GetValue(renderer)))throw new Exception("Growth to zero cells changed preview camera framing");
+            Console.WriteLine("PASS projection GPU mesh composition, fixed growth framing, non-square resize/readback, transparency, background and full-turn rotation");
         }
         finally{GL.DeleteTexture(texture);}
     }

@@ -12,6 +12,11 @@ internal static class SmokeTests
 {
     private static readonly (string Name, Func<Task> Run)[] Cases =
     {
+        ("blueprint projection persistence, automatic/manual particles and bounded export settings", RunSync(CreationProjectionChecks.Run)),
+        ("projection editing, layers, growth, stable copies, cell keys, deterministic collision and edge particles", RunSync(ProjectionEditingChecks.Run)),
+        ("structure fields, texture dependencies and duplicated identities roundtrip", RunSync(ProjectionEditingChecks.Persistence)),
+        ("100k-cell sliced rebuild, static cache and physics budget", RunSync(ProjectionEditingChecks.LargeStructure)),
+        ("automatic structure particles follow edited and deleted cells", RunSync(ProjectionEditingChecks.AutomaticParticles)),
         ("particle modules, expressions, events, geometry, compatibility and deterministic replay", RunSync(CreationParticleModuleChecks.Run)),
         ("advanced particle JSON, deterministic rewind/export, environments, children and budgets", RunSync(CreationAdvancedParticleChecks.Run)),
         ("creation defaults isolation, minimal overlays and authored/recorded hand visibility", RunSync(CreationPreferencesChecks.Run)),

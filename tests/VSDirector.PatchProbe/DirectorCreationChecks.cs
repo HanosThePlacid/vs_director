@@ -56,6 +56,8 @@ internal static partial class DirectorImGuiProbe
         {
             CheckCreationWorkflow(workspace,session);
             CheckCreationPreferences(workspace,session);
+            CheckProjectionEditor(workspace,session,runtime);
+            CheckContentNavigation(workspace,session,capture);
             foreach (string language in new[] { "zh-cn", "en" })
             {
             LoadCreationProbeLanguage(language);
@@ -509,7 +511,7 @@ internal static partial class DirectorImGuiProbe
         AccessTools.Field(workspace.GetType(), "<Active>k__BackingField").SetValue(workspace, true);
         var io = ImGui.GetIO(); Vector2 display = io.DisplaySize; io.DisplaySize = new(1280, 800);
         string locale = Lang.CurrentLocale;
-        var panelTitles = new[] { "###vsdirector-creation-browser", "###vsdirector-creation-properties", "###vsdirector-creation-timeline" };
+        var panelTitles = new[] { "###vsdirector-creation-browser", "###vsdirector-creation-content", "###vsdirector-creation-properties", "###vsdirector-creation-timeline" };
         void Frame(bool inspect = false)
         {
             ImGui.NewFrame();
@@ -523,7 +525,7 @@ internal static partial class DirectorImGuiProbe
                         bool visible = ImGui.Begin(title);
                         try
                         {
-                            if ((!visible && title != "###vsdirector-creation-properties") || ImGui.GetWindowDockID() == 0 || ImGui.GetWindowSize().X < 100)
+                            if (!visible || ImGui.GetWindowDockID() == 0 || ImGui.GetWindowSize().X < 100)
                                 throw new Exception("New/open project panel is hidden or undocked: " + title);
                             float expectedFont = ImGui.GetFont().FontSize * (float)GuiElement.scaled(1) * io.FontGlobalScale;
                             if (Math.Abs(ImGui.GetFontSize() - expectedFont) > .1f)
@@ -586,18 +588,22 @@ internal static partial class DirectorImGuiProbe
             }
             finally { RuntimeEnv.GUIScale = savedScale; }
             Frame();
-            Console.WriteLine("PASS creation panel fonts match legacy scaling at 100/150/200%");
+            uint objectDock=(uint)AccessTools.Property(host.GetType(),"LeftDockId").GetValue(host)!;
+            uint contentDock=(uint)AccessTools.Property(host.GetType(),"CreationContentDockId").GetValue(host)!;
+            uint inspectorDock=(uint)AccessTools.Property(host.GetType(),"InspectorDockId").GetValue(host)!;
+            if(contentDock==0||contentDock==objectDock||contentDock==inspectorDock)throw new Exception("Content must have its own dock below Objects");
+            Console.WriteLine("PASS independent Objects/Content/Properties docks and creation fonts at 100/150/200%");
             Frame();
             ImGui.NewFrame(); Call(host, "Draw", 1f / 60);
             ImGui.Begin("###vsdirector-creation-view");
             uint viewDock = ImGui.GetWindowDockID(); ImGui.End();
             ImGui.Begin("###vsdirector-creation-properties");
             uint propertiesDock = ImGui.GetWindowDockID(); ImGui.End(); ImGui.Render();
-            if (viewDock == 0 || viewDock != propertiesDock) throw new Exception("Creation View is not a right-side tab beside properties");
+            if (viewDock != 0) throw new Exception("Optional View must initially float instead of stacking with Properties");
             AccessTools.Field(workspace.GetType(), "view").SetValue(workspace, false); Frame(); Frame();
             AccessTools.Field(workspace.GetType(), "view").SetValue(workspace, true); Frame(); Frame();
             ImGui.NewFrame(); Call(host, "Draw", 1f / 60); ImGui.Begin("###vsdirector-creation-view");
-            if (ImGui.GetWindowDockID() != propertiesDock) throw new Exception("Reopening View changed its dock");
+            if (ImGui.GetWindowDockID() != viewDock) throw new Exception("Reopening View changed its placement");
             ImGui.End(); ImGui.Render();
             // A checked window can be behind another dock tab. Opening its menu item
             // must activate the window, not merely set the already-true flag again.
@@ -606,7 +612,7 @@ internal static partial class DirectorImGuiProbe
                 Call(workspace,"ShowCreationPanel",panel);Frame();Frame();
                 ImGui.NewFrame();Call(host,"Draw",1f/60);
                 bool showing=ImGui.Begin("###vsdirector-creation-"+panel);
-                if(!showing||ImGui.GetWindowDockID()!=propertiesDock)throw new Exception("Checked panel was not brought to front: "+panel);
+                if(!showing||ImGui.GetWindowDockID()!=(panel=="view"?viewDock:propertiesDock))throw new Exception("Checked panel was not brought to front: "+panel);
                 ImGui.End();ImGui.Render();
             }
             Call(workspace,"ShowCreationPanel","view");Frame();Frame();
@@ -654,9 +660,9 @@ internal static partial class DirectorImGuiProbe
                 AccessTools.Field(workspace.GetType(), "focusRigPanel").SetValue(workspace, entry.Item2); Frame(); Frame();
                 ImGui.NewFrame(); Call(host, "Draw", 1f / 60); ImGui.Begin("###vsdirector-creation-" + entry.Item2);
                 uint rigDock = ImGui.GetWindowDockID(); ImGui.End(); ImGui.Render();
-                if (rigDock != propertiesDock) throw new Exception("Rig tab did not reopen beside properties: " + entry.Item2);
+                if (rigDock != 0) throw new Exception("Optional rig panel must initially float: " + entry.Item2);
             }
-            Console.WriteLine("PASS independent Bones/IK/Actions native dock tabs close and reopen beside Properties");
+            Console.WriteLine("PASS optional Bones/IK/Actions windows close and reopen without default tab stacks");
             uint creationDock = (uint)AccessTools.Field(host.GetType(), "creationDock").GetValue(host)!;
             if (creationDock == 0 || creationDock == legacyDock) throw new Exception("Creation shares the legacy dock root.");
             Call(host, "ResetLayout"); Frame(); Frame(true);
@@ -754,7 +760,7 @@ internal static partial class DirectorImGuiProbe
             Console.WriteLine("PASS pending modal X/Escape/reopen preserves drafts and releases input/exit in Chinese/English at 100/150/200%");
             Console.WriteLine("PASS pending preview record/revert/cancel transitions and persisted creation dock recovery");
             Console.WriteLine("PASS isolated creation dock, legacy callback suspension/restoration and independent layout reset");
-            Console.WriteLine("PASS new/open project restores three dock panels, selects camera, runs real ImGuizmo and resolves Chinese/English creation text");
+            Console.WriteLine("PASS new/open project restores four dock panels, selects camera, runs real ImGuizmo and resolves Chinese/English creation text");
         }
         finally
         {

@@ -26,7 +26,7 @@ internal sealed partial class DirectorCreationWorkspace
     private readonly Dictionary<Guid,(float Radius,bool Diamond)> markerHits=new();
     private bool MarkerHit(Guid id,Vector2 point,Vector2 mouse)
     {if(!markerHits.TryGetValue(id,out var hit))return false;var d=Vector2.Abs(point-mouse);return hit.Diamond?d.X+d.Y<=hit.Radius:Math.Max(d.X,d.Y)<=hit.Radius;}
-    internal bool CapturePointer(int x, int y) => Active && Project is not null && (particleGuideDragging || particleGuideHover || hoveredPosePart != Guid.Empty || hoveredSceneObject != Guid.Empty || gizmoUsing || gizmoHover || poseHandles.Any(p=>{var d=Vector2.Abs(p.Point-new Vector2(x,y));return d.X+d.Y<=Overlay.Size*DirectorImGuiTheme.Scale;}) || objectPoints.Any(p=>MarkerHit(p.Id,p.Point,new(x,y))) || bonePoints.Any(p=>Vector2.Distance(p.Point,new(x,y))<=5*DirectorImGuiTheme.Scale));
+    internal bool CapturePointer(int x, int y) => Active && Project is not null && (projectionScene is not null || blueprintCapturing || projectionCellMode&&SelectedObject?.Projection is not null || particleGuideDragging || particleGuideHover || hoveredPosePart != Guid.Empty || hoveredSceneObject != Guid.Empty || gizmoUsing || gizmoHover || poseHandles.Any(p=>{var d=Vector2.Abs(p.Point-new Vector2(x,y));return d.X+d.Y<=Overlay.Size*DirectorImGuiTheme.Scale;}) || objectPoints.Any(p=>MarkerHit(p.Id,p.Point,new(x,y))) || bonePoints.Any(p=>Vector2.Distance(p.Point,new(x,y))<=5*DirectorImGuiTheme.Scale));
     internal bool Manipulating => Active && gizmoUsing;
     private void DrawAppearanceOverlay()
     {
@@ -45,6 +45,8 @@ internal sealed partial class DirectorCreationWorkspace
     }
     private void DrawViewportTools()
     {
+        if(projectionScene is not null||blueprintCapturing)return;
+        if(DrawProjectionViewport())return;
         if(directPosePart!=Guid.Empty&&(!gizmoUsing||!ImGui.IsMouseDown(ImGuiMouseButton.Left)||ImGui.IsKeyPressed(ImGuiKey.Escape,false)))
         {directPosePart=Guid.Empty;directPoseDrag=null;directPoseState=null;directPoseChain=null;}
         if(gizmoUsing && ImGui.IsKeyPressed(ImGuiKey.Escape,false)) { Session.CancelGesture();gizmoUsing=false;handleAxis=-1;return; }

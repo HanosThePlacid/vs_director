@@ -158,6 +158,15 @@ internal sealed partial class DirectorCreationRuntime
         bool ready = exportBackground == Guid.Empty ? owner.ActiveReplayId == Guid.Empty
             : owner.ActiveReplayId == exportBackground && owner.CreationBackgroundReady && pendingBackground == Guid.Empty;
         if (!ready || !CreationWorldReady) return;
+        foreach(var projection in Session.Project!.Objects.Where(o=>o.Projection is not null))
+        {
+            var build=Blueprints.Get(Session.Project,projection);
+            if(build.Error.Length>0)throw new InvalidOperationException(projection.Name+": "+build.Error);
+            if(!build.Ready)return;
+            if(build.Issues.Count>0)throw new InvalidOperationException(projection.Name+": "+string.Join("\n",build.Issues));
+        }
+        if(ProjectionError.Length>0)throw new InvalidOperationException(ProjectionError);
+        if(!ProjectionsReady)return;
         pendingExport = null; StartExport(path);
     }
 }

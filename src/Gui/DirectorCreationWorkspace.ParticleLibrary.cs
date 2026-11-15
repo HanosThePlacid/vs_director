@@ -41,6 +41,8 @@ internal sealed partial class DirectorCreationWorkspace
     }
     private void LoadParticleLibraryEffect(CreationSceneObject obj,CreationParticleEffect effect,bool add=false)=>Run(()=>
     {
+        if(add&&projectionSchemeTarget!=Guid.Empty){obj.ParticleEffect=effect.Duplicate();if(AcceptProjectionScheme(obj))return;}
+        if(add)AttachProjectionParticle(obj);
         var copy=effect.Duplicate();copy.Validate();
         foreach(var source in copy.Textures.Keys)if(Path.GetExtension(source).ToLowerInvariant() is not (".png" or ".jpg" or ".jpeg" or ".bmp"))throw new InvalidDataException("Invalid texture extension.");
         Session.Edit(P("preset-library"),p=>

@@ -80,6 +80,7 @@ internal sealed partial class DirectorCreationWorkspace
     }
     private void DrawTools()
     {
+        if(projectionScene is not null){DrawProjectionTools();return;}
         bool first=true;
         bool Choice(string label,bool active)
         {
@@ -120,6 +121,18 @@ internal sealed partial class DirectorCreationWorkspace
         if(ActiveTool is not CreationTool.Select && ImGui.IsItemHovered())ImGui.SetTooltip(L("creation-axis-space-help"));
         ImGui.EndDisabled();
         DrawParticleTools();
+        void ProjectionTool(string icon,string label,Action action)
+        {
+            if(ImGui.GetItemRectMax().X+ImGui.GetStyle().ItemSpacing.X+side<=right)ImGui.SameLine();
+            if(DirectorImGuiIcons.Button(DirectorImGuiIcons.Get(icon)+"##structure-tool-"+icon,new(side,side)))action();
+            if(ImGui.IsItemHovered())ImGui.SetTooltip(Q(label));
+        }
+        ProjectionTool("cube","wand",()=>{blueprintCapturing=true;blueprintHasRegion=false;});
+        if(SelectedObject?.Projection is not null)
+        {
+            ProjectionTool("refresh","rebuild",Runtime.RebuildProjections);
+            if(Runtime.ProjectionRebuilding)ProjectionTool("x","cancel",Runtime.CancelProjectionRebuild);
+        }
         host.MeasureCreationToolsHeight(ImGui.GetCursorPosY()+ImGui.GetStyle().WindowPadding.Y);
     }
     private void DrawActorActionPicker(CreationSceneObject actor)
@@ -137,6 +150,7 @@ internal sealed partial class DirectorCreationWorkspace
     private void FocusSelection()
     {
         if(Project is not {} project || Session.Frame is not {} frame || SelectedObject is null)return;
+        if(SelectedObject.Projection is not null){Runtime.FocusProjection(SelectedObject);return;}
         var points=new List<System.Numerics.Vector3>();
         foreach(var state in frame.Objects.Values.Where(s=>PartScope?s.Source.Id==Session.SelectedObject:ObjectSelected(s.Source.Id)))
         {

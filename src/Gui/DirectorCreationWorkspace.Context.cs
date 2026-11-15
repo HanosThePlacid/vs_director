@@ -34,7 +34,9 @@ internal sealed partial class DirectorCreationWorkspace
         public int LayoutVersion { get; set; }
         public bool Tools { get; set; } = true;
         public bool Properties { get; set; } = true;
-        public bool View { get; set; } = true;
+        public bool View { get; set; }
+        public bool Content { get; set; } = true;
+        public Dictionary<string, ContentView> ContentViews { get; set; } = new();
         public bool Bones { get; set; }
         public bool Ik { get; set; }
         public bool Actions { get; set; }
@@ -102,7 +104,9 @@ internal sealed partial class DirectorCreationWorkspace
         showBones=editorPreferences.BonePoints;showAllBones=editorPreferences.AllBones;exportTextures=editorPreferences.Defaults.ExportTextures;
         toolsPanel=editorPreferences.Tools;properties=editorPreferences.Properties;view=editorPreferences.View;
         if(editorPreferences.LayoutVersion>=2){bonesPanel=editorPreferences.Bones;ikPanel=editorPreferences.Ik;actionsPanel=editorPreferences.Actions;}
-        if(editorPreferences.LayoutVersion<3)host.MigrateCreationTools=true;
+        contentPanel=editorPreferences.Content;
+        editorPreferences.ContentViews ??= new();
+        if(editorPreferences.LayoutVersion<4) { host.MigrateCreationNavigation=true;contentPanel=browser=properties=timeline=toolsPanel=true;view=bonesPanel=ikPanel=actionsPanel=particlesPanel=false; }
         objectTool=Enum.IsDefined(typeof(CreationTool),editorPreferences.ObjectTool)?(CreationTool)editorPreferences.ObjectTool:CreationTool.Move;
         partTool=Enum.IsDefined(typeof(CreationTool),editorPreferences.PartTool)?(CreationTool)editorPreferences.PartTool:CreationTool.Rotate;
         objectRotationAxis=new[]{-1,0,1,2,6}.Contains(editorPreferences.ObjectAxis)?editorPreferences.ObjectAxis:-1;
@@ -114,7 +118,7 @@ internal sealed partial class DirectorCreationWorkspace
     private void PersistEditorPreferences()
     {
         editorPreferences.ParticleSplit=particleTreeRatio;editorPreferences.ParticlePage=particlePage;
-        SaveTimelineView();editorPreferences.LayoutVersion=host.MigrateCreationTools?0:3;
+        SaveContentView();SaveTimelineView();editorPreferences.Content=contentPanel;editorPreferences.LayoutVersion=host.MigrateCreationNavigation?0:4;
         editorPreferences.Tools=toolsPanel;editorPreferences.Properties=properties;editorPreferences.View=view;
         editorPreferences.Bones=bonesPanel;editorPreferences.Ik=ikPanel;editorPreferences.Actions=actionsPanel;
         editorPreferences.ObjectTool=(int)objectTool;editorPreferences.PartTool=(int)partTool;

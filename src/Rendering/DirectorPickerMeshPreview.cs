@@ -6,10 +6,10 @@ using Vintagestory.API.Client;
 namespace VSDirector.Rendering;
 
 /// <summary>Small transparent, depth-tested actor preview. Owns no world/entity state.</summary>
-internal sealed class DirectorPickerMeshPreview : IDisposable
+internal sealed partial class DirectorPickerMeshPreview : IDisposable
 {
     private int program, vao, buffer, framebuffer, depth, texture,accumulation,resolveProgram;
-    private const int Resolution = 256;
+    private int targetWidth = 256, targetHeight = 256;
     private readonly List<(int Texture, float[] Vertices, ParticleMaterial? Material)> batches = new();
     private Vector3 center;
     private float radius;
@@ -42,7 +42,7 @@ internal sealed class DirectorPickerMeshPreview : IDisposable
 
     internal void SetParticles(IReadOnlyList<CreationSimulatedParticle> particles,double time,Func<string,int> textureSource,IReadOnlyList<CreationParticleRibbon>? ribbons=null)
     {
-        var turn=Matrix4x4.CreateRotationY((float)(time*.35))*Matrix4x4.CreateRotationX(-.35f);Matrix4x4.Invert(turn,out var facing);
+        var turn=PreviewTurn(time);Matrix4x4.Invert(turn,out var facing);
         var ordered=particles.OrderBy(p=>Vector3.Transform(p.Position.Float(),turn).Z);
         var built=DirectorParticleMesh.Build(ordered,facing,_=>Vector3.One);
         foreach(var r in ribbons??[])built.Add(new(new(r.Texture,r.Additive,false,false,r.Glow,new(0,0,1,1)),DirectorParticleMesh.Ribbon(r,Vector3.TransformNormal(Vector3.UnitZ,facing),_=>Vector3.One)));
@@ -58,6 +58,13 @@ internal sealed class DirectorPickerMeshPreview : IDisposable
         batches.Clear();batches.AddRange(all);
         if(all.Count>0){center=(lo+hi)/2;radius=Math.Max(.3f,(hi-lo).Length()/2);}
     }
+    private Matrix4x4 PreviewTurn(double time)
+    {
+        double yaw=ProjectionView is {} v ? v.Yaw*Math.PI/180+(v.Rotate?time/v.Duration*Math.PI*2*(v.Clockwise?1:-1):0) : time*.35;
+        double pitch=(ProjectionView?.Pitch??(-.35*180/Math.PI))*Math.PI/180;
+        return Matrix4x4.CreateRotationY((float)yaw)*Matrix4x4.CreateRotationX((float)pitch);
+    }
+
     internal void Render(double time, float aspect)
     {
         using var state = new DirectorCreationRenderState();
@@ -73,15 +80,20 @@ internal sealed class DirectorPickerMeshPreview : IDisposable
             EnsureResources();
             GL.BindFramebuffer(FramebufferTarget.Framebuffer,framebuffer);
             GL.FramebufferTexture2D(FramebufferTarget.Framebuffer,FramebufferAttachment.ColorAttachment0,TextureTarget.Texture2D,accumulation,0);
-            targetState.Begin(new FrameBufferRef { FboId = framebuffer, Width = Resolution, Height = Resolution }, false);
+            targetState.Begin(new FrameBufferRef { FboId = framebuffer, Width = targetWidth, Height = targetHeight }, false);
+            if(ProjectionView is {} background && !background.Transparent){GL.ClearColor((float)background.Background.X,(float)background.Background.Y,(float)background.Background.Z,1);GL.Clear(ClearBufferMask.ColorBufferBit);}
             GL.Enable(EnableCap.DepthTest); GL.DepthFunc(DepthFunction.Less); GL.DepthMask(true);
             GL.ClearDepth(1); GL.Clear(ClearBufferMask.DepthBufferBit);
             GL.BindSampler(0, 0);
             GL.UseProgram(program);
             GL.Uniform1(GL.GetUniformLocation(program, "image"), 0);
-            GL.Uniform1(GL.GetUniformLocation(program, "yaw"), (float)(time * .35));
+            GL.Uniform1(GL.GetUniformLocation(program, "yaw"), (float)(ProjectionView is {} pv ? (pv.Yaw*Math.PI/180 + (pv.Rotate ? time/pv.Duration*Math.PI*2*(pv.Clockwise?1:-1):0)) : time*.35));
+            GL.Uniform1(GL.GetUniformLocation(program,"pitch"),(float)((ProjectionView?.Pitch??(-.35*180/Math.PI))*Math.PI/180));
+            GL.Uniform1(GL.GetUniformLocation(program,"perspective"),ProjectionView?.Perspective==true?1:0);
+            GL.Uniform1(GL.GetUniformLocation(program,"light"),(float)(ProjectionView?.Light??1));
+            GL.Uniform2(GL.GetUniformLocation(program,"pan"),(float)(ProjectionView?.PanX??0),(float)(ProjectionView?.PanY??0));
             GL.Uniform1(GL.GetUniformLocation(program, "aspect"), Math.Max(.1f, aspect));
-            GL.Uniform1(GL.GetUniformLocation(program, "radius"), radius / .9f);
+            GL.Uniform1(GL.GetUniformLocation(program, "radius"), radius / (.9f*(float)(ProjectionView?.Zoom??1)));
             GL.Uniform3(GL.GetUniformLocation(program, "center"), center.X, center.Y, center.Z);
             GL.BindVertexArray(vao); GL.BindBuffer(BufferTarget.ArrayBuffer, buffer);
             foreach (var batch in batches)
@@ -122,12 +134,12 @@ internal sealed class DirectorPickerMeshPreview : IDisposable
             #version 330 core
             layout(location=0) in vec3 position; layout(location=1) in vec2 uv;
             layout(location=2) in vec3 normal; layout(location=3) in vec4 color;
-            uniform vec3 center; uniform float radius, yaw, aspect; uniform int cube; uniform float glow;
+            uniform vec3 center; uniform float radius, yaw, aspect, pitch, light; uniform int perspective; uniform vec2 pan; uniform int cube; uniform float glow;
             out vec2 texcoord; out vec4 tint;
             vec3 turn(vec3 p) { float c=cos(yaw),s=sin(yaw); vec3 v=vec3(c*p.x+s*p.z,p.y,-s*p.x+c*p.z);
-                return vec3(v.x,cos(-.35)*v.y-sin(-.35)*v.z,sin(-.35)*v.y+cos(-.35)*v.z); }
-            void main() { vec3 p=turn(position-center)/radius; gl_Position=vec4(p.x*min(1.0,1.0/aspect),p.y*min(1.0,aspect),-p.z*.5,1);
-                texcoord=uv; tint=vec4(color.rgb*mix(cube!=0?(.65+.35*abs(dot(turn(normal),normalize(vec3(-.4,1,1))))):1.0,1.0,clamp(glow,0.0,1.0)),color.a); }
+                return vec3(v.x,cos(pitch)*v.y-sin(pitch)*v.z,sin(pitch)*v.y+cos(pitch)*v.z); }
+            void main() { vec3 p=turn(position-center)/radius; float w=perspective!=0?max(.1,1.0-p.z*.3):1.0; gl_Position=vec4(p.x*min(1.0,1.0/aspect)+pan.x*w,p.y*min(1.0,aspect)+pan.y*w,-p.z*.5,w);
+                texcoord=uv; tint=vec4(color.rgb*light*mix(cube!=0?(.65+.35*abs(dot(turn(normal),normalize(vec3(-.4,1,1))))):1.0,1.0,clamp(glow,0.0,1.0)),color.a); }
             """;
         const string fragment = """
             #version 330 core
@@ -161,19 +173,19 @@ internal sealed class DirectorPickerMeshPreview : IDisposable
             int[] sizes = [3, 2, 3, 4]; int offset = 0;
             for (int i = 0; i < sizes.Length; i++) { GL.EnableVertexAttribArray(i); GL.VertexAttribPointer(i, sizes[i], VertexAttribPointerType.Float, false, 12 * sizeof(float), offset * sizeof(float)); offset += sizes[i]; }
             texture = GL.GenTexture(); GL.BindTexture(TextureTarget.Texture2D, texture);
-            GL.TexImage2D(TextureTarget.Texture2D, 0, PixelInternalFormat.Rgba8, Resolution, Resolution, 0, PixelFormat.Rgba, PixelType.UnsignedByte, IntPtr.Zero);
+            GL.TexImage2D(TextureTarget.Texture2D, 0, PixelInternalFormat.Rgba8, targetWidth, targetHeight, 0, PixelFormat.Rgba, PixelType.UnsignedByte, IntPtr.Zero);
             GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureMinFilter, (int)TextureMinFilter.Linear);
             GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureMagFilter, (int)TextureMagFilter.Linear);
             GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureWrapS, (int)TextureWrapMode.ClampToEdge);
             GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureWrapT, (int)TextureWrapMode.ClampToEdge);
             accumulation=GL.GenTexture();GL.BindTexture(TextureTarget.Texture2D,accumulation);
-            GL.TexImage2D(TextureTarget.Texture2D,0,PixelInternalFormat.Rgba16f,Resolution,Resolution,0,PixelFormat.Rgba,PixelType.Float,IntPtr.Zero);
+            GL.TexImage2D(TextureTarget.Texture2D,0,PixelInternalFormat.Rgba16f,targetWidth,targetHeight,0,PixelFormat.Rgba,PixelType.Float,IntPtr.Zero);
             GL.TexParameter(TextureTarget.Texture2D,TextureParameterName.TextureMinFilter,(int)TextureMinFilter.Nearest);
             GL.TexParameter(TextureTarget.Texture2D,TextureParameterName.TextureMagFilter,(int)TextureMagFilter.Nearest);
             framebuffer = GL.GenFramebuffer(); GL.BindFramebuffer(FramebufferTarget.Framebuffer, framebuffer);
             GL.FramebufferTexture2D(FramebufferTarget.Framebuffer, FramebufferAttachment.ColorAttachment0, TextureTarget.Texture2D, texture, 0);
             depth = GL.GenRenderbuffer(); GL.BindRenderbuffer(RenderbufferTarget.Renderbuffer, depth);
-            GL.RenderbufferStorage(RenderbufferTarget.Renderbuffer, RenderbufferStorage.DepthComponent24, Resolution, Resolution);
+            GL.RenderbufferStorage(RenderbufferTarget.Renderbuffer, RenderbufferStorage.DepthComponent24, targetWidth, targetHeight);
             GL.FramebufferRenderbuffer(FramebufferTarget.Framebuffer, FramebufferAttachment.DepthAttachment, RenderbufferTarget.Renderbuffer, depth);
             if (GL.CheckFramebufferStatus(FramebufferTarget.Framebuffer) != FramebufferErrorCode.FramebufferComplete) throw new InvalidOperationException("Actor preview framebuffer is incomplete.");
         }

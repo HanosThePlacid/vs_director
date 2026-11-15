@@ -18,7 +18,7 @@ internal sealed partial class DirectorCreationRuntime
     internal Guid ParticleSolo {get;set;}
     private bool particleWorldWasReady;
     private readonly Dictionary<double,CreationFrame> particleTransforms=new();
-    internal bool ParticlesReady => Session.Project is not {} project || !project.Objects.Any(o=>o.Kind==CreationObjectKind.Particle&&o.ParticleEffect is not null)
+    internal bool ParticlesReady => Session.Project is not {} project || !project.Objects.Any(o=>o.Kind==CreationObjectKind.Particle&&o.ParticleEffect is not null||o.Projection is {ParticleSchemes.Count:>0})
         || particleSimulation is {} simulation && simulation.Ready && particleProject==project.Id && particleRevision==Session.Revision
         && particleBuiltEnvironment==particleEnvironment && Math.Abs(simulation.Time-Math.Floor(Session.Time/DirectorCreationParticleSimulation.Step+1e-7)*DirectorCreationParticleSimulation.Step)<1e-7;
     internal double ParticleProgress => particleSimulation?.Progress??1;
@@ -33,12 +33,12 @@ internal sealed partial class DirectorCreationRuntime
         particleResources?.Tick();
         if(Session.Project is not {} project)return;
         bool worldReady=CreationWorldReady&&(project.BackgroundReplayId==Guid.Empty||project.BackgroundReplayId==owner.ActiveReplayId&&owner.CreationBackgroundReady);
-        if(!worldReady){particleWorldWasReady=false;Renderer.AdvancedParticles=[];Renderer.ParticleRibbons=[];return;}
+        if(!worldReady||!ProjectionsReady){particleWorldWasReady=false;Renderer.AdvancedParticles=[];Renderer.ParticleRibbons=[];return;}
         if(!particleWorldWasReady){particleWorldWasReady=true;InvalidateParticleEnvironment();}
         if(particleProject!=project.Id){ResetParticles();particleProject=project.Id;}
         if(particleRevision!=Session.Revision)
         {ParticleOverrides.Refresh(project);if(ParticleOverrides.Notice.Length>0)Status=ParticleOverrides.Notice;}
-        if(!project.Objects.Any(o=>o.Kind==CreationObjectKind.Particle&&o.ParticleEffect is not null))
+        if(!project.Objects.Any(o=>o.Kind==CreationObjectKind.Particle&&o.ParticleEffect is not null||o.Projection is {ParticleSchemes.Count:>0}))
         {particleSimulation=null;Renderer.AdvancedParticles=[];Renderer.ParticleRibbons=[];particleRevision=Session.Revision;return;}
         if(particleRevision!=Session.Revision || particleBuiltEnvironment!=particleEnvironment || particleSimulation is null)
         {
@@ -52,6 +52,11 @@ internal sealed partial class DirectorCreationRuntime
                 }
                 return frame.Objects.TryGetValue(id,out var state)?state.World:Matrix4x4.Identity;
             },new ParticleEnvironment(api,project));
+            foreach(var obj in project.Objects.Where(o=>o.Projection is not null))
+            {
+                var build=Blueprints.Get(project,obj);var physical=new DirectorProjectionSimulation(build.Cells,obj.Projection!,new ParticleEnvironment(api,project),t=>DirectorCreationEvaluator.Evaluate(project,t).Objects[obj.Id].World);
+                particleSimulation.AddProjection(new(obj,build.Cells,t=>physical.Frame,physical.Seek));
+            }
             particleSimulation.Attachment=(id,bone,time)=>{var frame=DirectorCreationEvaluator.Evaluate(project,time);PrepareRuntimeFrame(project,frame,false);return frame.Objects.TryGetValue(id,out var state)?(bone!=Guid.Empty&&state.Bones.TryGetValue(bone,out var b)?b*state.World:state.World):Matrix4x4.Identity;};
         }
         try

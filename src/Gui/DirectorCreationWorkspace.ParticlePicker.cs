@@ -125,6 +125,8 @@ internal sealed partial class DirectorCreationWorkspace
         var obj = ParticleResourceObject(entries.Where(r => r.Kind == selected.Kind && r.Family == selected.Family && r.Variant == selected.Variant), position, Session.Time);
         if(!particleImportOriginal)DirectorParticlePreparation.Prepare(obj.ParticleEffect!,entries.Where(r=>r.Kind==selected.Kind&&r.Family==selected.Family&&r.Variant==selected.Variant).ToArray(),particleAllowDemonstration);
         obj.ParticleEffect!.Upgrade();obj.ParticleEffect.Validate();
+        if(AcceptProjectionScheme(obj))return;
+        AttachProjectionParticle(obj);
         Session.Edit(L("creation-particle-import-selected"), p => p.Objects.Add(obj));
         Select(obj);
         particleEmitter = obj.ParticleEffect.Emitters[0].Id;

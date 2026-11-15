@@ -10,6 +10,7 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <Reference Include="Newtonsoft.Json" HintPath="$(VintageStoryPath)\Lib\Newtonsoft.Json.dll" />
     <Reference Include="OpenTK.Core" HintPath="$(VintageStoryPath)\Lib\OpenTK.Core.dll" />
     <Reference Include="OpenTK.Mathematics" HintPath="$(VintageStoryPath)\Lib\OpenTK.Mathematics.dll" />
     <Reference Include="OpenTK.Graphics" HintPath="$(VintageStoryPath)\Lib\OpenTK.Graphics.dll" />

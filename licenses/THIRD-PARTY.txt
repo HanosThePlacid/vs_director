@@ -106,6 +106,22 @@ Mine-imator editor workflow, independently implemented with Director's shared
 handles. No Mine-imator runtime, GameMaker components or Minecraft assets
 are bundled; the authorization does not license third-party game resources.
 
+Fieldwright (Jeffrey Lueken / Venah), via Buildwright
+Reference: local VS_BuildWright revision 9b15446cd4049a4b0f86299ee57688ba80580b53.
+Fieldwright license: MIT; full text: Fieldwright-MIT.txt.
+Buildwright original code shares this project's author and is covered by ../LICENSE.
+Adapted Core/BlueprintModel.cs, Core/BlueprintCodec.cs, Client/RegionCapture.cs,
+Client/BlockEntityCapture.cs and Client/BuildwrightGhostMesh.cs into
+src/Blueprints/Adapted/. BlueprintFluidMesher.cs adapts the isolated chunk
+geometry workflow from Client/BlueprintTerrainProjection.cs. Fieldwright notices
+are retained in these files. Director independently integrates project-owned
+blueprint assets, cached resource browsing, transforms, particle child objects,
+standalone orbit preview and FFmpeg GIF/APNG export. Structure editing, slicing,
+growth/material layers, edge particles, deterministic visual physics and grouped
+structure timelines are independent Director implementations. No Buildwright mod system,
+server placement or world mutation code is invoked. The optional compatibility
+bridge uses an already installed Buildwright assembly; none is bundled.
+
 Runtime dependencies
 Vintage Story and its game assemblies (including VSEssentials and VSSurvivalMod),
 Harmony, protobuf-net, cairo-sharp and

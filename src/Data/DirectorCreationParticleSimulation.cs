@@ -56,8 +56,8 @@ public sealed partial class DirectorCreationParticleSimulation
     public IReadOnlyList<CreationSimulatedParticle> Particles { get; private set; } = [];
     public DirectorCreationParticleSimulation(DirectorCreationProject project, Func<Guid,double,Matrix4x4> transform, ICreationParticleEnvironment? environment = null)
     {
-        this.project=project;this.transform=transform;this.environment=environment??new CreationEmptyParticleEnvironment();wind=this.environment.Wind;temperature=this.environment.Temperature;rain=this.environment.Rain;
-        foreach(var obj in project.Objects.Where(o=>o.Kind==CreationObjectKind.Particle && o.ParticleEffect is not null))
+        this.project=project;this.transform=(id,time)=>ProjectionTransform(id,time,transform);this.environment=environment??new CreationEmptyParticleEnvironment();wind=this.environment.Wind;temperature=this.environment.Temperature;rain=this.environment.Rain;
+        foreach(var obj in project.Objects.Where(o=>o.Kind==CreationObjectKind.Particle && o.ParticleEffect is not null && (o.ProjectionParticleSource.Length==0 || project.Objects.Find(p=>p.Id==o.ParentId)?.Projection?.AutomaticParticles!=false)))
         {
             obj.ParticleEffect!.Validate();
             foreach(var e in obj.ParticleEffect.Emitters.Where(e=>e.Enabled)) roots.Add((obj,e,new(e.Properties,samples,e)));
@@ -82,11 +82,12 @@ public sealed partial class DirectorCreationParticleSimulation
             var work=Stopwatch.StartNew();
             for(int i=0;tick<target && i<maxSteps && (i==0||work.ElapsedMilliseconds<8);i++)
             {
+                if(!PrepareProjectionParticles((tick+1)*Step))break;
                 tick++;cellQueries=0; double now=tick*Step;
                 if(tick>0)Advance(now);
                 foreach(var (obj,e,d) in roots)
                 {
-                    if(e.Legacy is not null)continue;
+                    if(e.Legacy is not null||!ProjectionEmitterVisible(obj.Id))continue;
                     if(e.Modules is not null){EmitModuleRoot(obj,e,d,now);continue;}
                     if(e.Start>obj.ParticleDuration)continue;
                     double start=obj.ParticleStart+e.Start;
@@ -105,6 +106,7 @@ public sealed partial class DirectorCreationParticleSimulation
                         Spawn(obj,e,d,pos,parentVelocity,born,0,Seed(obj.ParticleEffect!.Seed,emission,e.Id.GetHashCode()),matrix);
                     }
                 }
+                EmitProjectionParticles(now);
                 RecordTrails(now);
                 if(tick%120==0)
                 {
@@ -287,6 +289,7 @@ public sealed partial class DirectorCreationParticleSimulation
                     CreationVector.From(Vector3.Abs(scale)),rotation,p.Progress));
             }
         }
+        StyleProjectionParticles(output);
         foreach(var group in output.GroupBy(p=>p.ObjectId))if(group.Count()>EffectBudget)throw new CreationParticleBudgetException($"{project.Objects.First(o=>o.Id==group.Key).Name}: particle budget exceeded.");
         if(output.Count>ProjectBudget)throw new CreationParticleBudgetException("Project particle budget exceeded.");
         var meshCounts=output.Where(p=>p.Mesh is not null).GroupBy(p=>p.ObjectId);

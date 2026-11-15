@@ -16,42 +16,34 @@ internal sealed partial class DirectorCreationWorkspace
         if(obj.ParticleEffect!.Version<3){Hint(P("upgrade-hint"));return;}
         if(particleModulePage=="geometry"&&!obj.ParticleEffect.Emitters.Contains(emitter)){Hint(P("geometry-root-only"));return;}
         var m=emitter.Modules!;
-        bool first=true;
-        foreach(string page in new[]{"shape","schedule","forces","material","geometry","drivers"})
-            if(InlineChoice(P(page),particleModulePage==page,ref first))particleModulePage=page;
         void ForEach(Action<CreationParticleModules> edit){foreach(var node in ParticleTargets(obj.ParticleEffect,emitter))if(node.Modules is {} target)edit(target);}
         if(particleModulePage=="shape")
         {
+            FocusContentField("Shape");
             Choice(P("shape"),m.Shape,v=>ForEach(t=>t.Shape=v),Enum.GetValues<ParticleSpawnShape>().Select(t=>P(t.ToString())).ToArray());
-            Choice(P("direction"),m.Direction,v=>ForEach(t=>t.Direction=v),Enum.GetValues<ParticleDirection>().Select(t=>P(t.ToString())).ToArray());
-            ParticleAttachment(P("attachment"),m.BindObject,m.BindBone,(id,bone)=>ForEach(t=>{t.BindObject=id;t.BindBone=bone;}));
+            FocusContentField("Direction");Choice(P("direction"),m.Direction,v=>ForEach(t=>t.Direction=v),Enum.GetValues<ParticleDirection>().Select(t=>P(t.ToString())).ToArray());
+            FocusContentField("BindObject");FocusContentField("BindBone");ParticleAttachment(P("attachment"),m.BindObject,m.BindBone,(id,bone)=>ForEach(t=>{t.BindObject=id;t.BindBone=bone;}));
         }
-        if(particleModulePage=="material")Choice(P("facing"),m.Facing,v=>ForEach(t=>t.Facing=v),Enum.GetValues<ParticleFacing>().Select(t=>P("facing-"+t)).ToArray());
+        if(particleModulePage=="material"){FocusContentField("Facing");Choice(P("facing"),m.Facing,v=>ForEach(t=>t.Facing=v),Enum.GetValues<ParticleFacing>().Select(t=>P("facing-"+t)).ToArray());}
         if(particleModulePage=="geometry")
         {
-            Choice(P("geometry"),m.Geometry,v=>ForEach(t=>t.Geometry=v),Enum.GetValues<ParticleGeometry>().Select(t=>P(t.ToString())).ToArray());
+            FocusContentField("Geometry");Choice(P("geometry"),m.Geometry,v=>ForEach(t=>t.Geometry=v),Enum.GetValues<ParticleGeometry>().Select(t=>P(t.ToString())).ToArray());
             if(m.Geometry==ParticleGeometry.Trail&&Combo(P("trail-source"),obj.ParticleEffect.AllNodes().FirstOrDefault(e=>e.Id==m.TrailEmitter)?.Name??P("attachment")))
             {
                 if(ImGui.Selectable(P("attachment")))Session.Edit(P("trail-source"),_=>m.TrailEmitter=Guid.Empty);
                 foreach(var source in obj.ParticleEffect.AllNodes().Where(e=>e.Id!=emitter.Id&&e.Modules?.Geometry==ParticleGeometry.Particle))if(ImGui.Selectable(source.Name+"##"+source.Id))Session.Edit(P("trail-source"),_=>m.TrailEmitter=source.Id);
                 ImGui.EndCombo();
             }
-            ParticleAttachment(P("end-attachment"),m.EndObject,m.EndBone,(id,bone)=>ForEach(t=>{t.EndObject=id;t.EndBone=bone;}));
+            FocusContentField("EndObject");FocusContentField("EndBone");ParticleAttachment(P("end-attachment"),m.EndObject,m.EndBone,(id,bone)=>ForEach(t=>{t.EndObject=id;t.EndBone=bone;}));
         }
-        string[] fields=particleModulePage switch
-        {
-            "shape"=>["Extent","Surface","DirectionSpeed","MeshSource","MeshParticle"],
-            "schedule"=>["LoopPeriod","DistanceInterval","Probability","Delay","InheritVelocity"],
-            "forces"=>["Acceleration","Drag","ForceCenter","Attraction","Vortex","Noise","Parametric","InitialRotation","Spin","SpinAcceleration","Friction","KillPlane","KillHeight","ExpireBlocks","ExpireOutsideBlocks","ColorBlock"],
-            "material"=>["Width","Height","UvOrigin","UvSize","Columns","Rows","Frames","FramesPerSecond","AnimateByLife","TextureLoop"],
-            "geometry"=>["End","RibbonWidth","Retain","SampleDistance","Segments","Bend","Jitter","Branches","FlickerRate","TextureFlow","ClipAtTerrain","FadeEnds"],_=>[]
-        };
+        string[] fields=ParticleModuleFields(particleModulePage).Where(f=>particleModuleFieldSubset is null||particleModuleFieldSubset.Contains(f)).ToArray();
         foreach(string field in fields)
         {
+            FocusContentField(field);
             var property=typeof(CreationParticleModules).GetProperty(field)!;object value=property.GetValue(m)!;
             void Set(object next)=>ForEach(t=>property.SetValue(t,next));
             string label=P(field);
-            if(value is CreationVector vector)VectorField(label,vector,v=>Set(v),.01f);
+            if(value is CreationVector vector)VectorField(label,vector,v=>Set(v),.01f,inline:true);
             else if(value is bool b)Toggle(label,b,v=>Set(v));
             else if(value is string text)TextField(label,text,v=>Set(v));
             else if(value is int integer)Number(label,integer,v=>{Set((int)v);ForEach(t=>t.Frames=Math.Clamp(t.Frames,1,t.Columns*t.Rows));},field=="Branches"?0:field=="Segments"?2:1,field=="Branches"?16:field=="Segments"?512:field=="Frames"?m.Columns*m.Rows:256,1);
@@ -76,9 +68,9 @@ internal sealed partial class DirectorCreationWorkspace
             Hint(P("ribbon-profile"));
             for(int i=0;i<m.RibbonProfile.Points.Count;i++)
             {int index=i;ImGui.PushID("ribbon-width-"+i);Number(P("age"),m.RibbonProfile.Points[i].Time,v=>m.RibbonProfile.Points[index].Time=v,i==0?0:m.RibbonProfile.Points[i-1].Time+.001,i==m.RibbonProfile.Points.Count-1?1:m.RibbonProfile.Points[i+1].Time-.001,.01f);Number(P("Width"),m.RibbonProfile.Points[i].Value,v=>m.RibbonProfile.Points[index].Value=v,0,100,.01f);ImGui.PopID();}
-            DrawParticleGradient(m);
+            if(drawingContentInspector){if(Button(P("gradient")))particleGradientOpen=true;}else DrawParticleGradient(m);
         }
-        if(particleModulePage=="material")DrawParticleGradient(m);
+        if(particleModulePage=="material"&&!drawingContentInspector)DrawParticleGradient(m);
         if(particleModulePage=="drivers")DrawParticleDrivers(emitter);
         if(Button(P("restore-module")))Session.Edit(P("restore-module"),_=>
         {
@@ -87,7 +79,7 @@ internal sealed partial class DirectorCreationWorkspace
             {
                 foreach(string field in fields){var property=typeof(CreationParticleModules).GetProperty(field)!;property.SetValue(target,property.GetValue(defaults));}
                 if(particleModulePage=="drivers")target.Drivers.Clear();
-                if(particleModulePage=="material")target.Gradient=new();
+                if(particleModulePage=="material"&&!drawingContentInspector)target.Gradient=new();
                 if(particleModulePage=="shape"){target.Shape=ParticleSpawnShape.Point;target.Direction=ParticleDirection.Velocity;target.BindObject=target.BindBone=Guid.Empty;target.Mesh.Clear();target.Path=new CreationParticleModules().Path;}
                 if(particleModulePage=="schedule")target.Bursts.Clear();
                 if(particleModulePage=="geometry"){target.Geometry=ParticleGeometry.Particle;target.EndObject=target.EndBone=Guid.Empty;target.RibbonProfile=new();}
@@ -125,7 +117,7 @@ internal sealed partial class DirectorCreationWorkspace
         {
             var stop=m.Gradient.Stops[i];int index=i;ImGui.PushID(i);
             Number(P("age"),stop.Time,v=>stop.Time=v,i==0?0:m.Gradient.Stops[i-1].Time+.001,i==m.Gradient.Stops.Count-1?1:m.Gradient.Stops[i+1].Time-.001,.01f);
-            var color=new Vector4(stop.Color.Float(),(float)stop.Alpha);bool changed=ImGui.ColorEdit4(P("color"),ref color);
+            var color=new Vector4(stop.Color.Float(),(float)stop.Alpha);ImGui.TextWrapped(P("color"));ImGui.SetNextItemWidth(-1);bool changed=ImGui.ColorEdit4("##gradient-color",ref color);
             Widget(P("gradient"),changed,()=>{stop.Color=new(color.X,color.Y,color.Z);stop.Alpha=color.W;});
             if(m.Gradient.Stops.Count>2&&Button(L("creation-delete")))Session.Edit(P("gradient"),_=>m.Gradient.Stops.RemoveAt(index));ImGui.PopID();
         }
@@ -154,8 +146,7 @@ internal sealed partial class DirectorCreationWorkspace
     }
     private void DrawParticleCurveWindow()
     {
-        if(Runtime.Exporting||Runtime.PerformanceActive||auxiliary.Length>0||!particleCurveOpen||SelectedObject?.ParticleEffect?.AllNodes().FirstOrDefault(e=>e.Id==particleEmitter)?.Modules is not {} m||!m.Drivers.TryGetValue(particleDriver,out var driver))return;
-        if(host.TimelineDockId!=0)ImGui.SetNextWindowDockID(host.TimelineDockId,ImGuiCond.FirstUseEver);
+        if(Runtime.Exporting||Runtime.PerformanceActive||auxiliary.Length>0||!particleCurveOpen||ContentParticleObject?.ParticleEffect?.AllNodes().FirstOrDefault(e=>e.Id==particleEmitter)?.Modules is not {} m||!m.Drivers.TryGetValue(particleDriver,out var driver))return;
         var viewport=GameImageRect();
         ImGui.SetNextWindowPos(viewport.Position+new Vector2(8,Math.Max(0,viewport.Size.Y-300)),ImGuiCond.FirstUseEver);
         ImGui.SetNextWindowSize(new(Math.Max(240,Math.Min(640,viewport.Size.X-16)),300),ImGuiCond.FirstUseEver);

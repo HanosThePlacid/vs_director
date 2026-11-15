@@ -19,25 +19,21 @@ internal sealed partial class DirectorCreationWorkspace
     private void DrawParticleEditor(CreationSceneObject obj)
     {
         if(obj.ParticleEffect is not null){DrawAdvancedParticleEditor(obj);return;}
-        if(Button(L("creation-particle-convert")))
+        if(LegacySectionVisible("files")&&Button(L("creation-particle-convert")))
         {Session.Edit(L("creation-particle-convert"),_=>obj.ParticleEffect=CreationParticleFields.ConvertLegacy(obj));return;}
         var settings=obj.ParticleSettings??CreationParticleSettings.Preset(obj.ResourceCode);
         // Do not dirty legacy works merely by opening their inspector.
         void Set(Action<CreationParticleSettings> edit) { obj.ParticleSettings=settings; edit(settings); }
         static string PresetName(string code)=>L(code switch { "smoke"=>"creation-smoke","snow"=>"creation-snow","glow"=>"creation-glow-particles",_=>"creation-sparks" });
-        if(Combo(L("creation-particle-preset"),PresetName(obj.ResourceCode)))
+        if(LegacySectionVisible("files")&&Combo(L("creation-particle-preset"),PresetName(obj.ResourceCode)))
         {
             foreach(string code in new[]{"smoke","sparks","snow","glow"})
                 if(ImGui.Selectable(PresetName(code))) Session.Edit(L("creation-select-particles"),_=>
                 { obj.ResourceCode=code;obj.ParticleSettings=CreationParticleSettings.Preset(code);obj.Glow=code is "sparks" or "glow"?1:0; });
             ImGui.EndCombo();
         }
-        if(Button(L(Session.Playing?"creation-pause":"creation-particle-play")))
-        { if(Session.Playing)Session.Play(false);else {Runtime.Seek(obj.ParticleStart);Session.Play(true);} }
-        SameLineIfFits(L("creation-particle-reset"));
-        if(Button(L("creation-particle-reset"))) {Session.Play(false);Runtime.Seek(obj.ParticleStart);}
         ImGui.TextWrapped(L("creation-particle-units"));
-        if(Header(L("creation-particle-emission")))
+        if(LegacySectionVisible("emission")&&Header(L("creation-particle-emission")))
         {
             Toggle(L("creation-particle-burst"),settings.Burst,v=>Set(s=>s.Burst=v));
             TimeNumber(L("creation-start-time"),obj.ParticleStart,v=>obj.ParticleStart=v,0,Project!.Duration);
@@ -48,14 +44,14 @@ internal sealed partial class DirectorCreationWorkspace
             Number(L("creation-particle-seed"),settings.Seed,v=>Set(s=>s.Seed=(int)v),0,int.MaxValue,1);
             VectorField(L("creation-particle-spread"),settings.Spread,v=>Set(s=>s.Spread=ClampParticleVector(v,0,1000)),.01f);
         }
-        if(Header(L("creation-particle-motion")))
+        if(LegacySectionVisible("motion")&&Header(L("creation-particle-motion")))
         {
             VectorField(L("creation-particle-velocity"),settings.Velocity,v=>Set(s=>s.Velocity=ClampParticleVector(v,-1000,1000)),.05f);
             VectorField(L("creation-particle-velocity-spread"),settings.VelocitySpread,v=>Set(s=>s.VelocitySpread=ClampParticleVector(v,0,1000)),.05f);
             VectorField(L("creation-particle-acceleration"),settings.Acceleration,v=>Set(s=>s.Acceleration=ClampParticleVector(v,-1000,1000)),.1f);
             Number(L("creation-particle-spin"),settings.Spin,v=>Set(s=>s.Spin=v),-3600,3600,1);
         }
-        if(Header(L("creation-particle-appearance")))
+        if(LegacySectionVisible("appearance")&&Header(L("creation-particle-appearance")))
         {
             Choice(L("creation-particle-shape"),settings.Shape,v=>Set(s=>s.Shape=v),[L("creation-particle-soft"),L("creation-particle-quad"),L("creation-particle-cube")]);
             Number(L("creation-particle-size-start"),settings.StartSize,v=>Set(s=>s.StartSize=v),.001,100,.01f);
@@ -75,6 +71,7 @@ internal sealed partial class DirectorCreationWorkspace
                 Runtime.Renderer.ReloadTextures();
             });
         }
+        if(!LegacySectionVisible("files"))return;
         if(Button(L("creation-particle-import")))FileDialog(L("creation-particle-import"),file=>
         {
             var preset=JsonSerializer.Deserialize<CreationParticlePreset>(File.ReadAllText(file),CreationJson.Options)??throw new InvalidDataException(L("creation-particle-invalid-preset"));

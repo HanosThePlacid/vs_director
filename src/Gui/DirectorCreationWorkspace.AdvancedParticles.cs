@@ -27,10 +27,6 @@ internal sealed partial class DirectorCreationWorkspace
         ImGui.SetNextItemWidth(-1);ImGui.InputTextWithHint("##parameter-search",P("search"),ref particleParameterSearch,256);
         string[] filters=[P("filter-all"),P("filter-pinned"),P("filter-modified"),P("filter-driven")];
         if(Combo(P("filter"),filters[particleFieldFilter])){for(int i=0;i<filters.Length;i++)if(ImGui.Selectable(filters[i],particleFieldFilter==i))particleFieldFilter=i;ImGui.EndCombo();}
-        bool first=true;
-        foreach(string page in new[]{"common","emission","motion","appearance","environment","children","modules","files","json"})
-            if(InlineChoice(P(page),particlePage==page,ref first))particlePage=page;
-        ImGui.Separator();
         if(emitter is null)return;
         if(ParticleTargets(effect,emitter).Skip(1).Any())Hint(P("mixed-values"));
         particleEmitter=emitter.Id;
@@ -152,18 +148,20 @@ internal sealed partial class DirectorCreationWorkspace
     }
     private void DrawNativeParticleFields(CreationParticleEffect effect,CreationParticleEmitter emitter,JsonObject properties,string[] path,int depth)
     {
-        foreach(string group in new[]{"emission","motion","appearance","environment","children"}.Where(g=>particleFieldFilter>0 || particleParameterSearch.Length>0 || particlePage=="common" || g==particlePage))
+        foreach(string group in new[]{"emission","motion","appearance","environment","children"}.Where(g=>nativeContentSection is not null || particleFieldFilter>0 || particleParameterSearch.Length>0 || particlePage=="common" || g==particlePage))
         {
             ImGui.PushID(group);
-            if(Header(L("creation-particle-"+group)))foreach(var field in CreationParticleFields.All.Where(f=>f.Group==group && f.Kind!="children" && f.Name!="VertexFlags" && (particleFieldFilter==0 || particleFieldFilter==1&&particlePinned.Contains(f.Name) || particleFieldFilter==2&&!JsonNode.DeepEquals(CreationParticleFields.Find(properties,f.Name),CreationParticleFields.Find(emitter.Original??CreationParticleFields.Defaults(),f.Name)) || particleFieldFilter==3&&emitter.Modules?.Drivers.ContainsKey(f.Name)==true) && (particleParameterSearch.Length>0 ? (f.Name+" "+L("creation-particle-field-"+f.Name.ToLowerInvariant())).Contains(particleParameterSearch,StringComparison.OrdinalIgnoreCase) : particleFieldFilter>0 || particlePage!="common" || new[]{"Quantity","LifeLength","Size","Velocity","GravityEffect"}.Contains(f.Name))))
+            if((nativeContentSection is null && Header(L("creation-particle-"+group))) || nativeContentSection is not null)foreach(var field in CreationParticleFields.All.Where(f=>f.Group==group && (f.Kind!="children" || effect.Version<3) && f.Name!="VertexFlags" && (nativeContentSection is null || depth>0 || NativeContentSection(f.Name)==nativeContentSection) && (nativeContentSection is not null || particleFieldFilter==0 || particleFieldFilter==1&&particlePinned.Contains(f.Name) || particleFieldFilter==2&&!JsonNode.DeepEquals(CreationParticleFields.Find(properties,f.Name),CreationParticleFields.Find(emitter.Original??CreationParticleFields.Defaults(),f.Name)) || particleFieldFilter==3&&emitter.Modules?.Drivers.ContainsKey(f.Name)==true) && (nativeContentSection is not null || (particleParameterSearch.Length>0 ? (f.Name+" "+L("creation-particle-field-"+f.Name.ToLowerInvariant())).Contains(particleParameterSearch,StringComparison.OrdinalIgnoreCase) : particleFieldFilter>0 || particlePage!="common" || new[]{"Quantity","LifeLength","Size","Velocity","GravityEffect"}.Contains(f.Name)))))
             {
-                ImGui.PushID(field.Name);var node=CreationParticleFields.Find(properties,field.Name);
+                ImGui.PushID(field.Name);FocusContentField(field.Name);var node=CreationParticleFields.Find(properties,field.Name);
                 string label=L("creation-particle-field-"+field.Name.ToLowerInvariant());
-                ImGui.TextUnformatted((particlePinned.Contains(field.Name)?"★ ":"")+label);
+                ImGui.TextWrapped((particlePinned.Contains(field.Name)?"★ ":"")+label);
                 if(ImGui.IsItemHovered())ImGui.SetTooltip(field.Name+" · "+P("field-context"));
                 if(ImGui.BeginPopupContextItem("field-options"))
                 {
                     if(ImGui.MenuItem(P("pin"),"",particlePinned.Contains(field.Name))){if(!particlePinned.Add(field.Name))particlePinned.Remove(field.Name);}
+                    if(emitter.Modules is not null && ParticleParameters.All.Any(p=>p.Id==field.Name) && ImGui.MenuItem(N("drivers")))
+                    {particleDriver=field.Name;NavigateContent("p.drivers",emitter.Id);}
                     if(ImGui.MenuItem(P("restore-field")))Session.Edit(P("restore-field"),_=>SetParticleNode(effect,emitter,path.Append(field.Name).ToArray(),CreationParticleFields.Find(emitter.Original??CreationParticleFields.Defaults(),field.Name)));
                     ImGui.EndPopup();
                 }
@@ -195,7 +193,6 @@ internal sealed partial class DirectorCreationWorkspace
                 }
                 else
                 {
-                    ImGui.TextWrapped(label);
                     bool enabled=node is not null && (node is not JsonArray array||array.Any(n=>n is not null));
                     if(field.Kind=="evolve")
                     {
@@ -209,8 +206,8 @@ internal sealed partial class DirectorCreationWorkspace
                         double Get(int i,string key)=>nodes?[i] is JsonObject n?CreationParticleFields.Number(n,key):key=="avg"?field.Default:0;
                         void Values(string key,CreationVector v)
                         {var a=nodes is null?new JsonArray(Enumerable.Range(0,3).Select(_=>(JsonNode)CreationParticleFields.Nat(field.Default)).ToArray()):(JsonArray)nodes.DeepClone();double[] values=[v.X,v.Y,v.Z];for(int i=0;i<3;i++)CreationParticleFields.Set((JsonObject)a[i]!,key,JsonValue.Create(values[i]));Set(a);}
-                        VectorField(L("creation-particle-mean"),Read("avg"),v=>Values("avg",v),.01f);
-                        VectorField(L("creation-particle-variation"),Read("var"),v=>Values("var",v),.01f);
+                        VectorField(L("creation-particle-mean"),Read("avg"),v=>Values("avg",v),.01f,inline:true);
+                        VectorField(L("creation-particle-variation"),Read("var"),v=>Values("var",v),.01f,inline:true);
                     }
                     for(int i=0;i<Math.Max(1,field.Length);i++)
                     {

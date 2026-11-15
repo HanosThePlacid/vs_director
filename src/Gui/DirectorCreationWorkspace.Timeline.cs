@@ -359,6 +359,7 @@ internal sealed partial class DirectorCreationWorkspace
                     if (expanded)
                     {
                         if(obj.ModelId!=Guid.Empty && timelineFilter is TimelineFilter.All or TimelineFilter.Pose && (!keyedTracksOnly||obj.PoseKeys.Count>0)) { DrawScenePoseRow(obj,x0,visibleWidth,labelWidth,rowHeight,X,T); DrawScenePoseDetails(obj,x0,visibleWidth,labelWidth,rowHeight,X,T); }
+                        if(obj.Projection is not null)DrawProjectionTracks(obj,x0,visibleWidth,labelWidth,rowHeight,X,T);
                         if(obj.ParticleEffect is not null)DrawParticleNodeTracks(obj,x0,visibleWidth,labelWidth,rowHeight,X,T);
                         foreach (var track in tracks.Where(t => t.ObjectId == obj.Id)) DrawTrack(track);
                         if(timelineFilter is TimelineFilter.All or TimelineFilter.Clips) foreach (int lane in p.Clips.Where(c => c.ObjectId == obj.Id).Select(c => c.Lane).Distinct().OrderBy(v => v)) DrawLane(obj.Id, lane);

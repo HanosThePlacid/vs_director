@@ -224,6 +224,7 @@ internal sealed partial class DirectorCreationRenderer : IRenderer
             api.Render.RenderMultiTextureMesh(mesh, "tex");
             return;
         }
+        if(obj.Projection is not null){RenderProjection(project,state);return;}
         if (obj.Blocks.Count == 0) return;
         foreach (var blockData in obj.Blocks)
         {

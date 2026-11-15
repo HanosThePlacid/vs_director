@@ -129,6 +129,7 @@ internal sealed partial class DirectorCreationRuntime : IDirectorOffscreenFrameS
         {
             if (finishing is { IsCompleted: true }) finishing = null;
             if (!Enabled) return;
+            Blueprints.Tick();
             if (!ProjectWorldMatches)
             {
                 ClosePlayerInventory(); Session.Play(false);
@@ -168,7 +169,7 @@ internal sealed partial class DirectorCreationRuntime : IDirectorOffscreenFrameS
                 else
                 {
                     bool advancing = Session.Playing;
-                    if (CreationWorldReady && ParticlesReady) Session.Tick(delta);
+                    if (CreationWorldReady && ProjectionsReady && ParticlesReady) Session.Tick(delta);
                     UpdateCreationWorld(advancing && Session.EditingAnimation is null);
                     if (!PerformanceActive && Session.EditingAnimation is null && advancing && project.BackgroundReplayId == owner.ActiveReplayId && project.BackgroundReplayId != Guid.Empty)
                         owner.SeekCreationBackground(BackgroundTime(Session.Time), advancing: true);
@@ -179,6 +180,7 @@ internal sealed partial class DirectorCreationRuntime : IDirectorOffscreenFrameS
                 Session.RecordSample(new(entity.Pos.X, entity.Pos.Y, entity.Pos.Z), new(entity.Pos.Pitch * GameMath.RAD2DEG, entity.Pos.Yaw * GameMath.RAD2DEG, entity.Pos.Roll * GameMath.RAD2DEG));
                 if (!Session.Playing) Session.StopRecording();
             }
+            UpdateProjections();
             UpdateParticles();
             UpdateSounds();
             UpdateView();
@@ -208,7 +210,7 @@ internal sealed partial class DirectorCreationRuntime : IDirectorOffscreenFrameS
     {
         if (frame.ViewId != viewId) return;
         PreviewTexture = frame.ColorTextureId;
-        if (screenshot.Length > 0 && CreationWorldReady && ParticlesReady && ParticleError.Length==0 && !ParticleRebuildCancelled)
+        if (screenshot.Length > 0 && CreationWorldReady && ProjectionsReady && ParticlesReady && ParticleError.Length==0 && !ParticleRebuildCancelled)
         {
             try { using var bitmap = api.Render.GrabScreenshot(frame.Width, frame.Height, false, true); bitmap.Save(screenshot); Status = L("creation-screenshot-saved") + screenshot; }
             catch (Exception e) { Status = Message(e.Message); }
@@ -217,7 +219,7 @@ internal sealed partial class DirectorCreationRuntime : IDirectorOffscreenFrameS
         if (fileSink is null || frameSubmitted || stopRequested) return;
         bool backgroundReady = Session.Project is not { BackgroundReplayId: var background } || background == Guid.Empty
             || (background == owner.ActiveReplayId && owner.CreationBackgroundReady);
-        backgroundReady &= CreationWorldReady && ParticlesReady && ParticleError.Length==0 && !ParticleRebuildCancelled;
+        backgroundReady &= CreationWorldReady && ProjectionsReady && ParticlesReady && ParticleError.Length==0 && !ParticleRebuildCancelled;
         if (exportGate.Next(backgroundReady) != DirectorReplayExportFrameAction.Capture) return;
         long before = fileSink.Statistics.SubmittedReadbacks;
         fileSink.OnFrame(frame);
@@ -379,6 +381,7 @@ internal sealed partial class DirectorCreationRuntime : IDirectorOffscreenFrameS
     internal void RestoreAppearance() { RestoreEntities(); if (Session.Project is not null) Session.Edit(L("creation-restore-appearance"), p => { foreach (var o in p.Objects) o.ReplacePlayerUid = ""; }); }
     internal void Suspend(bool force = false)
     {
+        ResetProjections();blueprints?.Clear();
         ClosePlayerInventory();
         FinishPerformanceBeforeTransition();
         try { if (Session.Dirty) Session.Save(); }
@@ -392,7 +395,7 @@ internal sealed partial class DirectorCreationRuntime : IDirectorOffscreenFrameS
     {
         if (disposed) return; disposed = true; api.Event.UnregisterGameTickListener(tick);
         api.Event.BlockChanged -= ParticleBlockChanged;
-        particleResources?.Dispose(); ParticleOverrides.Dispose();
+        ResetProjections();blueprints?.Dispose();particleResources?.Dispose(); ParticleOverrides.Dispose();
         RestoreEntities(); if (ReferenceEquals(Current,this)) Current=null;
         exportCancellation?.Cancel(); fileSink?.Stop(); fileSink?.Dispose(); fileSink = null;
         try { finishing?.GetAwaiter().GetResult(); } catch (OperationCanceledException) { }

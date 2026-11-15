@@ -131,8 +131,8 @@ internal sealed partial class DirectorCreationWorkspace
             PrefBool("creation-properties",properties,v=>{properties=v;if(v)ShowCreationPanel("properties");});PrefBool("creation-creation-timeline",timeline,v=>timeline=v);
             PrefBool("creation-view",view,v=>view=v);PrefBool("creation-bones-tab",bonesPanel,v=>bonesPanel=v);
             PrefBool("creation-pref-ik-panel",ikPanel,v=>ikPanel=v);PrefBool("creation-actions-tab",actionsPanel,v=>actionsPanel=v);
-            PrefBool("creation-particle-editor",particlesPanel,v=>particlesPanel=v);
-            if(Button(L("creation-reset-layout")))host.ResetLayout();
+            PrefBool("creation-nav-content",contentPanel,v=>{contentPanel=v;if(v)ShowCreationPanel("content");});
+            if(Button(L("creation-reset-layout")))ResetContentLayout();
         }
         if(category==4)
         {

@@ -28,7 +28,7 @@ internal sealed partial class DirectorCreationWorkspace
         var p=new Matrix4x4(projection[0],projection[1],projection[2],projection[3],projection[4],projection[5],projection[6],projection[7],projection[8],projection[9],projection[10],projection[11],projection[12],projection[13],projection[14],projection[15]);
         Vector2? Screen(Vector3 at) { var c=Vector4.Transform(new Vector4(at,1),v*p); return c.W<=.001f?null:min+new Vector2((c.X/c.W+1)*size.X/2,(1-c.Y/c.W)*size.Y/2); }
         if(Screen(world.Translation) is not { } center) { handleAxis=-1;handleHover=-1;return false; }
-        float units=Math.Max(.000001f,Math.Abs(Vector3.Transform(world.Translation,v).Z)/(Math.Abs(projection[5])*size.Y/2));
+        float units=Math.Max(.000001f,Math.Abs(Vector4.Transform(new Vector4(world.Translation,1),v*p).W)/(Math.Abs(projection[5])*size.Y/2));
         var right=Vector3.Normalize(new Vector3(view[0],view[4],view[8]));var up=Vector3.Normalize(new Vector3(view[1],view[5],view[9]));var eye=Vector3.Normalize(new Vector3(view[2],view[6],view[10]));
         var axes=new[]{Vector3.UnitX,Vector3.UnitY,Vector3.UnitZ};
         if(transformMode==MODE.LOCAL && Matrix4x4.Decompose(world,out _,out var orientation,out _))

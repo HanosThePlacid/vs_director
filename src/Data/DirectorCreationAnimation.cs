@@ -433,6 +433,7 @@ public static class DirectorCreationEdits
         {
             o.Id = New(o.Id); o.ParentId = New(o.ParentId); o.ParentPartId = New(o.ParentPartId); o.TargetId = New(o.TargetId);
             o.ModelId = New(o.ModelId); o.AssetId = New(o.AssetId);
+            DirectorProjectionEditing.Remap(o,New);
             foreach(var node in o.ParticleEffect?.AllNodes()??[]){node.Id=New(node.Id);if(node.Modules is {} module){module.BindObject=New(module.BindObject);module.BindBone=New(module.BindBone);module.EndObject=New(module.EndObject);module.EndBone=New(module.EndBone);module.TrailEmitter=New(module.TrailEmitter);}}
             foreach (var chain in o.IkChains) { chain.Id = New(chain.Id); chain.Upper = New(chain.Upper); chain.Lower = New(chain.Lower); chain.Target = New(chain.Target); chain.Pole = New(chain.Pole); }
             o.Pose = o.Pose.ToDictionary(p => New(p.Key), p => p.Value); o.HiddenParts = o.HiddenParts.Select(New).ToHashSet();
@@ -449,6 +450,7 @@ public static class DirectorCreationEdits
             {
                 o.Id = New(o.Id); o.ParentId = New(o.ParentId); o.ParentPartId = New(o.ParentPartId); o.TargetId = New(o.TargetId);
                 o.ModelId = New(o.ModelId); o.AssetId = New(o.AssetId);
+            DirectorProjectionEditing.Remap(o,New);
             foreach(var node in o.ParticleEffect?.AllNodes()??[]){node.Id=New(node.Id);if(node.Modules is {} module){module.BindObject=New(module.BindObject);module.BindBone=New(module.BindBone);module.EndObject=New(module.EndObject);module.EndBone=New(module.EndBone);module.TrailEmitter=New(module.TrailEmitter);}}
                 o.Pose = o.Pose.ToDictionary(x => New(x.Key), x => x.Value);
                 o.HiddenParts = o.HiddenParts.Select(New).ToHashSet();

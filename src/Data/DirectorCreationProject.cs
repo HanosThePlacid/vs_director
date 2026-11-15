@@ -133,6 +133,8 @@ public sealed class CreationSceneObject
     public CreationVector ImageSize { get; set; } = new(1, 1, 0);
     public double[] Crop { get; set; } = [0, 0, 1, 1];
     public bool Billboard { get; set; }
+    public CreationProjectionSettings? Projection { get; set; }
+    public string ProjectionParticleSource { get; set; } = "";
     public List<CreationStructureBlock> Blocks { get; set; } = new();
 }
 
@@ -301,7 +303,7 @@ public sealed partial class DirectorCreationProject
                 || !double.IsFinite(obj.Opacity) || !double.IsFinite(obj.Fov) || !double.IsFinite(obj.OrbitRadius) || !double.IsFinite(obj.OrbitSpeed) || !double.IsFinite(obj.Shake)
                 || !double.IsFinite(obj.ParticleLife) || !double.IsFinite(obj.ParticleStart) || !double.IsFinite(obj.ParticleDuration) || !obj.ImageSize.Finite())
                 throw new InvalidDataException("Non-finite object transform.");
-            obj.ParticleSettings?.Validate();obj.ParticleEffect?.Validate();
+            obj.ParticleSettings?.Validate();obj.ParticleEffect?.Validate();obj.Projection?.Validate();
             ValidateParent(obj.Id, objectParents);
         }
         foreach (var model in Models)
