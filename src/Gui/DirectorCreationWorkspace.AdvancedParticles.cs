@@ -17,88 +17,86 @@ internal sealed partial class DirectorCreationWorkspace
     private void DrawAdvancedParticleEditor(CreationSceneObject obj)
     {
         var effect=obj.ParticleEffect!;
-        if(Button(L(Session.Playing?"creation-pause":"creation-particle-play")))
-        {if(Session.Playing)Session.Play(false);else{Runtime.Seek(obj.ParticleStart);Session.Play(true);}}
-        SameLineIfFits(L("creation-particle-reset"));
-        if(Button(L("creation-particle-reset"))){Session.Play(false);Runtime.Seek(obj.ParticleStart);}
-        if(Runtime.ParticleRebuildCancelled)Hint(L("creation-particle-cancelled"));
-        else if(!Runtime.ParticlesReady)
+        var emitter=effect.AllNodes().FirstOrDefault(e=>e.Id==particleEmitter)??effect.Emitters.FirstOrDefault();
+        ImGui.TextWrapped(obj.Name+" / "+(emitter?.Name??""));
+        if(effect.Version<3)
         {
-            ImGui.ProgressBar((float)Runtime.ParticleProgress);Hint(L("creation-particle-rebuilding"));
-            if(Button(L("creation-particle-cancel")))Runtime.CancelParticleRebuild();
+            Hint(P("upgrade-hint"));
+            if(Button(P("upgrade")))Session.Edit(P("upgrade"),_=>effect.Upgrade());
         }
-        if(Runtime.ParticleError.Length>0)ImGui.TextWrapped(Runtime.ParticleError);
-        if(Button(L("creation-particle-refresh-environment")))Runtime.InvalidateParticleEnvironment();
-        TextField(L("creation-particle-effect-name"),effect.Name,v=>effect.Name=v);
-        TimeNumber(L("creation-start-time"),obj.ParticleStart,v=>obj.ParticleStart=v,0,86400);
-        TimeNumber(L("creation-emission-duration"),obj.ParticleDuration,v=>obj.ParticleDuration=v,0,86400);
-        Number(L("creation-particle-seed"),effect.Seed,v=>effect.Seed=(int)v,0,int.MaxValue,1);
-        var emitter=effect.Emitters.FirstOrDefault(e=>e.Id==particleEmitter)??effect.Emitters.FirstOrDefault();
-        if(Combo(L("creation-particle-emitter"),emitter?.Name??""))
-        {foreach(var e in effect.Emitters)if(ImGui.Selectable(e.Name+"##"+e.Id,e==emitter))particleEmitter=e.Id;ImGui.EndCombo();}
-        if(Button(L("creation-particle-add-emitter")))Session.Edit(L("creation-particle-add-emitter"),_=>{var e=new CreationParticleEmitter();effect.Emitters.Add(e);particleEmitter=e.Id;});
+        ImGui.SetNextItemWidth(-1);ImGui.InputTextWithHint("##parameter-search",P("search"),ref particleParameterSearch,256);
+        string[] filters=[P("filter-all"),P("filter-pinned"),P("filter-modified"),P("filter-driven")];
+        if(Combo(P("filter"),filters[particleFieldFilter])){for(int i=0;i<filters.Length;i++)if(ImGui.Selectable(filters[i],particleFieldFilter==i))particleFieldFilter=i;ImGui.EndCombo();}
+        bool first=true;
+        foreach(string page in new[]{"common","emission","motion","appearance","environment","children","modules","files","json"})
+            if(InlineChoice(P(page),particlePage==page,ref first))particlePage=page;
+        ImGui.Separator();
+        if(emitter is null)return;
+        if(ParticleTargets(effect,emitter).Skip(1).Any())Hint(P("mixed-values"));
+        particleEmitter=emitter.Id;
+        if(particlePage=="files"){DrawParticleFiles(obj);return;}
+        if(particlePage=="json")
+        {
+            string id=obj.Id+"/"+emitter.Id;
+            if(particleJsonId!=id){particleJsonId=id;particleJson=emitter.Properties.ToJsonString(CreationJson.Options);}
+            if(Button(L("creation-particle-json-refresh")))particleJson=emitter.Properties.ToJsonString(CreationJson.Options);
+            ImGui.InputTextMultiline("##particle-json",ref particleJson,1024*1024,new(-1,Math.Max(80,ImGui.GetContentRegionAvail().Y-45)));
+            if(Button(L("creation-apply")))Run(()=>{var node=JsonNode.Parse(particleJson) as JsonObject??throw new InvalidDataException("Expected particle object.");CreationParticleFields.Validate(node);Session.Edit(L("creation-apply"),_=>SetParticleNode(effect,emitter,[],node));});
+            return;
+        }
+        if(particlePage=="modules") {DrawParticleModules(obj,emitter);return;}
+        if(particlePage=="common")
+        {
+            TextField(L("creation-name"),emitter.Name,v=>emitter.Name=v);
+            string[] scopes=[L("creation-particle-scope-emitter"),L("creation-particle-scope-variant"),L("creation-particle-scope-family")];
+            if(Combo(L("creation-particle-edit-scope"),scopes[particleScope])){for(int i=0;i<scopes.Length;i++)if(ImGui.Selectable(scopes[i]))particleScope=i;ImGui.EndCombo();}
+            Hint(P("targets")+": "+ParticleTargets(effect,emitter).Count());
+            Number(P("game-speed"),effect.GameSpeed,v=>effect.GameSpeed=v,.05,200,.05f);
+            Number(P("density"),effect.Density,v=>effect.Density=v,0,100,.05f);
+        }
+        void Edit(Action<CreationParticleEmitter> set){foreach(var e in ParticleTargets(effect,emitter))set(e);}
+        if(particlePage is "common" or "emission" && effect.Emitters.Contains(emitter))
+        {
+            TimeNumber(L("creation-start-time"),emitter.Start,v=>Edit(e=>e.Start=v),0,86400);
+            TimeNumber(L("creation-emission-duration"),emitter.Duration,v=>Edit(e=>e.Duration=v),0,86400);
+            Number(L("creation-particle-interval"),emitter.Interval,v=>Edit(e=>e.Interval=v),.001,86400,.01f);
+            Toggle(L("creation-particle-burst"),emitter.Burst,v=>Edit(e=>e.Burst=v));
+        }
+        if(particlePage=="emission")
+        {
+            VectorField(L("creation-particle-offset"),emitter.Offset,v=>Edit(e=>e.Offset=v),.01f);
+            Toggle(L("creation-particle-local-follow"),emitter.LocalFollow,v=>Edit(e=>e.LocalFollow=v));
+            Number(L("creation-particle-parent-velocity"),emitter.ParentVelocityWeight,v=>Edit(e=>e.ParentVelocityWeight=v),0,1000,.01f);
+            TimeNumber(P("effect-start"),obj.ParticleStart,v=>obj.ParticleStart=v,0,86400);
+            TimeNumber(P("effect-duration"),obj.ParticleDuration,v=>obj.ParticleDuration=v,0,86400);
+            Number(L("creation-particle-seed"),effect.Seed,v=>effect.Seed=(int)v,0,int.MaxValue,1);
+        }
+        if(particlePage is "common" or "appearance")DrawParticleColor(effect,emitter);
+        DrawNativeParticleFields(effect,emitter,emitter.Properties,[],0);
+        if(particlePage=="appearance")
+        {
+            TextField(L("creation-particle-texture"),emitter.Texture,v=>Edit(e=>e.Texture=v.Trim()));
+            if(Button(L("creation-particle-import-texture")))FileDialog(L("creation-particle-import-texture"),file=>{Session.Edit(L("creation-particle-import-texture"),p=>{var source=Session.Store.Import(p,file,CreationAssetKind.Texture).Source;Edit(e=>e.Texture=source);});Runtime.Renderer.ReloadTextures();});
+            Toggle(L("creation-particle-soft"),emitter.SoftEdge,v=>Edit(e=>e.SoftEdge=v));
+            Toggle(L("creation-particle-additive"),emitter.Additive,v=>Edit(e=>e.Additive=v));
+            DrawParticleFlags(effect,emitter);
+        }
+        if(particlePage=="children")DrawParticleChildActions(effect,emitter);
+    }
+    private void DrawParticleFiles(CreationSceneObject obj)
+    {
+        var effect=obj.ParticleEffect!;
+        var emitter=effect.AllNodes().FirstOrDefault(e=>e.Id==particleEmitter)??effect.Emitters.FirstOrDefault();
+        foreach(var issue in ParticleCompatibility.Issues(effect))Hint(issue);
         if(emitter is not null)
         {
-            SameLineIfFits(L("creation-duplicate"));
-            if(Button(L("creation-duplicate")))Session.Edit(L("creation-duplicate"),_=>{var copy=CreationJson.Clone(emitter);copy.Id=Guid.NewGuid();copy.Name+=" (2)";effect.Emitters.Add(copy);particleEmitter=copy.Id;});
-            SameLineIfFits(L("creation-delete"));
-            if(Button(L("creation-delete"))){Session.Edit(L("creation-delete"),_=>effect.Emitters.Remove(emitter));return;}
-            TextField(L("creation-name"),emitter.Name,v=>emitter.Name=v);
-            Toggle(L("creation-enabled"),emitter.Enabled,v=>emitter.Enabled=v);
-            if(emitter.Legacy is not null)Hint(L("creation-particle-converted-hint"));
-            Hint(emitter.Source);
-            string[] scopes=[L("creation-particle-scope-emitter"),L("creation-particle-scope-variant"),L("creation-particle-scope-family")];
-            if(Combo(L("creation-particle-edit-scope"),scopes[particleScope]))
-            {for(int i=0;i<scopes.Length;i++)if(ImGui.Selectable(scopes[i],i==particleScope))particleScope=i;ImGui.EndCombo();}
-            if(particleScope>0)Hint(L("creation-particle-batch-warning"));
-            if(ImGui.BeginTabBar("particle-tabs"))
-            {
-                if(ImGui.BeginTabItem(L("creation-particle-parameters")))
-                {
-                    if(Header(L("creation-particle-emission")))
-                    {
-                        VectorField(L("creation-particle-offset"),emitter.Offset,v=>emitter.Offset=v,.01f);
-                        TimeNumber(L("creation-start-time"),emitter.Start,v=>emitter.Start=v,0,86400);
-                        Number(L("creation-particle-interval"),emitter.Interval,v=>emitter.Interval=v,.001,86400,.01f);
-                        TimeNumber(L("creation-emission-duration"),emitter.Duration,v=>emitter.Duration=v,0,86400);
-                        Toggle(L("creation-particle-burst"),emitter.Burst,v=>emitter.Burst=v);
-                        Toggle(L("creation-particle-local-follow"),emitter.LocalFollow,v=>emitter.LocalFollow=v);
-                    }
-                    DrawNativeParticleFields(effect,emitter,emitter.Properties,[],0);
-                    if(Header(L("creation-particle-rendering")))
-                    {
-                        TextField(L("creation-particle-texture"),emitter.Texture,v=>emitter.Texture=v.Trim());
-                        if(Button(L("creation-particle-import-texture")))FileDialog(L("creation-particle-import-texture"),file=>
-                        {Session.Edit(L("creation-particle-import-texture"),p=>emitter.Texture=Session.Store.Import(p,file,CreationAssetKind.Texture).Source);Runtime.Renderer.ReloadTextures();});
-                        Toggle(L("creation-particle-soft"),emitter.SoftEdge,v=>emitter.SoftEdge=v);
-                        Toggle(L("creation-particle-additive"),emitter.Additive,v=>emitter.Additive=v);
-                        Number(L("creation-particle-parent-velocity"),emitter.ParentVelocityWeight,v=>emitter.ParentVelocityWeight=v,0,1000,.01f);
-                    }
-                    ImGui.EndTabItem();
-                }
-                if(ImGui.BeginTabItem("JSON"))
-                {
-                    string id=obj.Id+"/"+emitter.Id;
-                    if(particleJsonId!=id){particleJsonId=id;particleJson=emitter.Properties.ToJsonString(CreationJson.Options);}
-                    if(Button(L("creation-particle-json-refresh")))particleJson=emitter.Properties.ToJsonString(CreationJson.Options);
-                    ImGui.InputTextMultiline("##particle-json",ref particleJson,1024*1024,new(-1,260));
-                    if(Button(L("creation-apply")))Run(()=>
-                    {var p=JsonNode.Parse(particleJson) as JsonObject??throw new InvalidDataException("Expected particle object.");CreationParticleFields.Validate(p);Session.Edit(L("creation-apply"),_=>SetParticleNode(effect,emitter,[],p));});
-                    ImGui.EndTabItem();
-                }
-                ImGui.EndTabBar();
-            }
-            foreach(string warning in CreationParticleFields.Warnings(emitter.Properties))Hint(warning);
-            if(Button(L("creation-particle-restore-original")))Session.Edit(L("creation-particle-restore-original"),_=>
-            {emitter.Properties=(JsonObject)(emitter.Original??CreationParticleFields.Defaults()).DeepClone();emitter.Legacy=null;});
+            if(Button(L("creation-particle-restore-original")))Session.Edit(L("creation-particle-restore-original"),_=>{foreach(var e in ParticleTargets(effect,emitter)){e.Properties=(JsonObject)(e.Original??CreationParticleFields.Defaults()).DeepClone();e.Children.Clear();e.Modules=effect.Version>=3?new():null;e.Legacy=null;if(effect.Version>=3)e.Upgrade();}});
             Runtime.ParticleResources.Start();
             var source=Runtime.ParticleResources.Entries.FirstOrDefault(r=>r.Id==emitter.Source);
             if(source is not null)
             {
-                IEnumerable<DirectorParticleResource> Targets()=>Runtime.ParticleResources.Entries.Where(r=>
-                    particleScope==0?r.Id==source.Id: r.Index==source.Index && (particleScope==1?r.Family==source.Family&&r.Variant==source.Variant:r.Family==source.Family));
+                IEnumerable<DirectorParticleResource> Targets()=>Runtime.ParticleResources.Entries.Where(r=>particleScope==0?r.Id==source.Id:r.Index==source.Index&&(particleScope==1?r.Family==source.Family&&r.Variant==source.Variant:r.Family==source.Family));
                 if(Button(L("creation-particle-apply-client")))Run(()=>Runtime.ParticleOverrides.Apply(Targets(),obj,emitter));
-                SameLineIfFits(L("creation-particle-restore-client"));
                 if(Button(L("creation-particle-restore-client")))Run(()=>Runtime.ParticleOverrides.Restore(Targets()));
             }
         }
@@ -115,7 +113,7 @@ internal sealed partial class DirectorCreationWorkspace
                     var asset=new CreationAsset{Kind=CreationAssetKind.Texture,Name=Path.GetFileName(pair.Key)};
                     asset.Source="assets/"+asset.Id.ToString("N")+extension;
                     string destination=Session.Store.AssetPath(p.Id,asset.Source);Directory.CreateDirectory(Path.GetDirectoryName(destination)!);File.WriteAllBytes(destination,pair.Value);p.Assets.Add(asset);
-                    foreach(var e in imported.Emitters.Where(e=>e.Texture==pair.Key))e.Texture=asset.Source;
+                    foreach(var e in imported.AllNodes().Where(e=>e.Texture==pair.Key))e.Texture=asset.Source;
                 }
                 imported.Textures.Clear();obj.ParticleEffect=imported;
                 obj.ParticleDuration=Math.Max(obj.ParticleDuration,imported.Emitters.Select(e=>e.Start+e.Duration).DefaultIfEmpty(0).Max());
@@ -125,14 +123,16 @@ internal sealed partial class DirectorCreationWorkspace
         if(Button(L("creation-particle-export")))FileDialog(L("creation-particle-export"),file=>
         {
             var copy=CreationJson.Clone(effect);
-            foreach(var e in copy.Emitters)if(e.Texture.StartsWith("assets/",StringComparison.Ordinal))copy.Textures[e.Texture]=File.ReadAllBytes(Session.Store.AssetPath(Project!.Id,e.Texture));
+            foreach(var e in copy.AllNodes())if(e.Texture.StartsWith("assets/",StringComparison.Ordinal))copy.Textures[e.Texture]=File.ReadAllBytes(Session.Store.AssetPath(Project!.Id,e.Texture));
             copy.Validate();DirectorCreationStore.AtomicWrite(file,JsonSerializer.Serialize(copy,CreationJson.Options));
         },"particle.director.json");
         if(Button(L("creation-particle-export-native")))FileDialog(L("creation-particle-export-native"),file=>DirectorCreationStore.AtomicWrite(file,CreationParticleFields.ExportNative(effect)),"particle.native.json");
+        if(Button(P("export-compatible")))FileDialog(P("export-compatible"),file=>DirectorCreationStore.AtomicWrite(file,CreationParticleFields.ExportNative(effect,true)),"particle.compatible.json");
         Hint(L("creation-particle-native-export-hint"));
+        DrawParticleLibrary(obj);
     }
     private IEnumerable<CreationParticleEmitter> ParticleTargets(CreationParticleEffect effect,CreationParticleEmitter emitter)
-        =>effect.Emitters.Where(e=>e==emitter||particleScope>0&&emitter.Source.Length>0&&e.Family==emitter.Family
+        =>effect.AllNodes().Where(e=>e==emitter||particleMulti.Contains(e.Id)||particleScope>0&&emitter.Source.Length>0&&e.Family==emitter.Family
             &&(particleScope==2||e.Variant==emitter.Variant));
     private static JsonNode? ParticleNodeAt(JsonObject root,IReadOnlyList<string> path)
     {
@@ -142,7 +142,7 @@ internal sealed partial class DirectorCreationWorkspace
     {
         foreach(var target in ParticleTargets(effect,emitter))
         {
-            if(path.Length==0){target.Properties=(JsonObject)value!.DeepClone();target.Legacy=null;continue;}
+            if(path.Length==0){target.Properties=(JsonObject)value!.DeepClone();target.Legacy=null;if(effect.Version>=3){target.Children.Clear();target.Upgrade();}continue;}
             JsonNode? parent=ParticleNodeAt(target.Properties,path[..^1]);
             if(parent is JsonObject o)CreationParticleFields.Set(o,path[^1],value?.DeepClone());
             else if(parent is JsonArray a&&int.TryParse(path[^1],out int index)&&index<a.Count)a[index]=value?.DeepClone();
@@ -152,13 +152,22 @@ internal sealed partial class DirectorCreationWorkspace
     }
     private void DrawNativeParticleFields(CreationParticleEffect effect,CreationParticleEmitter emitter,JsonObject properties,string[] path,int depth)
     {
-        foreach(string group in new[]{"emission","motion","appearance","environment","children"})
+        foreach(string group in new[]{"emission","motion","appearance","environment","children"}.Where(g=>particleFieldFilter>0 || particleParameterSearch.Length>0 || particlePage=="common" || g==particlePage))
         {
             ImGui.PushID(group);
-            if(Header(L("creation-particle-"+group)))foreach(var field in CreationParticleFields.All.Where(f=>f.Group==group))
+            if(Header(L("creation-particle-"+group)))foreach(var field in CreationParticleFields.All.Where(f=>f.Group==group && f.Kind!="children" && f.Name!="VertexFlags" && (particleFieldFilter==0 || particleFieldFilter==1&&particlePinned.Contains(f.Name) || particleFieldFilter==2&&!JsonNode.DeepEquals(CreationParticleFields.Find(properties,f.Name),CreationParticleFields.Find(emitter.Original??CreationParticleFields.Defaults(),f.Name)) || particleFieldFilter==3&&emitter.Modules?.Drivers.ContainsKey(f.Name)==true) && (particleParameterSearch.Length>0 ? (f.Name+" "+L("creation-particle-field-"+f.Name.ToLowerInvariant())).Contains(particleParameterSearch,StringComparison.OrdinalIgnoreCase) : particleFieldFilter>0 || particlePage!="common" || new[]{"Quantity","LifeLength","Size","Velocity","GravityEffect"}.Contains(f.Name))))
             {
                 ImGui.PushID(field.Name);var node=CreationParticleFields.Find(properties,field.Name);
-                string label=L("creation-particle-field-"+field.Name.ToLowerInvariant());var fieldPath=path.Append(field.Name).ToArray();
+                string label=L("creation-particle-field-"+field.Name.ToLowerInvariant());
+                ImGui.TextUnformatted((particlePinned.Contains(field.Name)?"★ ":"")+label);
+                if(ImGui.IsItemHovered())ImGui.SetTooltip(field.Name+" · "+P("field-context"));
+                if(ImGui.BeginPopupContextItem("field-options"))
+                {
+                    if(ImGui.MenuItem(P("pin"),"",particlePinned.Contains(field.Name))){if(!particlePinned.Add(field.Name))particlePinned.Remove(field.Name);}
+                    if(ImGui.MenuItem(P("restore-field")))Session.Edit(P("restore-field"),_=>SetParticleNode(effect,emitter,path.Append(field.Name).ToArray(),CreationParticleFields.Find(emitter.Original??CreationParticleFields.Defaults(),field.Name)));
+                    ImGui.EndPopup();
+                }
+                var fieldPath=path.Append(field.Name).ToArray();
                 void Set(JsonNode? n)=>SetParticleNode(effect,emitter,fieldPath,n);
                 if(field.Kind=="bool")Toggle(label,node?.GetValue<bool>()??field.Default!=0,v=>Set(JsonValue.Create(v)));
                 else if(field.Kind is "number" or "int")Number(label,CreationParticleFields.Number(properties,field.Name,field.Default),v=>Set(JsonValue.Create(field.Kind=="int"?(int)v:v)),-int.MaxValue,int.MaxValue,field.Kind=="int"?1:.01f);

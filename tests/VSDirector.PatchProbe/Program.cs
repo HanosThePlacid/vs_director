@@ -2831,7 +2831,7 @@ try
         throw new InvalidOperationException(
             "Settings must use the native VSImGui window, controls, and persistent footer actions.");
     }
-    Console.WriteLine("PASS settings uses searchable native collapsing groups, controls, and footer actions");
+    Console.WriteLine("PASS settings uses searchable native categories, controls, and footer actions");
 
     if (typeof(VSDirectorModSystem).GetMethod("TopActivityStatusText", BindingFlags.Instance | BindingFlags.NonPublic) is not null
         || typeof(DirectorConfig).GetProperty("ShowCameraStatusBar") is not null

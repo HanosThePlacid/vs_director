@@ -13,6 +13,7 @@ uniform vec3 worldLight;
 uniform vec3 lightDirection;
 uniform int surfaceShading;
 uniform int particleMask;
+uniform vec4 particleUv = vec4(0.0, 0.0, 1.0, 1.0);
 uniform vec4 fogColor;
 uniform float fogDensity;
 uniform float fogMinimum;
@@ -22,7 +23,8 @@ void main() {
     vec4 color = textured != 0 ? texture(tex, uv) : vec4(1.0);
     color *= tint * vertexColor;
     if (particleMask != 0) {
-        float radius = length(uv * 2.0 - 1.0);
+        vec2 localUv = (uv - particleUv.xy) / max(particleUv.zw - particleUv.xy, vec2(0.00001));
+        float radius = length(localUv * 2.0 - 1.0);
         color.a *= 1.0 - smoothstep(0.0, 1.0, radius);
     }
     if (color.a < 0.01) discard;

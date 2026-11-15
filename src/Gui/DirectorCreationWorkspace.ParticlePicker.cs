@@ -3,6 +3,7 @@ using System.Numerics;
 using ImGuiNET;
 using VSDirector.Data;
 using VSDirector.Runtime;
+using VSDirector.Rendering;
 using static VSDirector.Gui.DirectorCreationText;
 
 namespace VSDirector.Gui;
@@ -12,23 +13,30 @@ internal sealed partial class DirectorCreationWorkspace
     private readonly Dictionary<string, ParticleCardPreview> particlePreviews = new(StringComparer.Ordinal);
     private int particlePreviewsCreated;
     private string particleCategory = "";
+    private bool particleImportOriginal,particleAllowDemonstration;
+    private bool particleChooseLibrary;
 
     private void OpenParticlePicker()
     {
         particleResourceId = "";
         particleCategory = "";
         error = "";
-        particlePreviews.Clear();
+        ClearParticlePreviews();
         Runtime.ParticleResources.Start();
         auxiliary = "particles";
     }
 
     private void DrawParticleResources()
     {
+        bool first=true;
+        if(InlineChoice(P("native-resources"),!particleChooseLibrary,ref first))particleChooseLibrary=false;
+        if(InlineChoice(P("preset-library"),particleChooseLibrary,ref first))particleChooseLibrary=true;
+        if(particleChooseLibrary){DrawParticlePresetPicker();return;}
         var resources = Runtime.ParticleResources;
         resources.Start();
         ImGui.SetNextItemWidth(-1);
         if (ImGui.InputTextWithHint("##particle-search", L("creation-particle-search"), ref particleSearch, 512)) particleCategory = "";
+        Checkbox(P("import-original"),ref particleImportOriginal);SameLineIfFits(P("allow-demo"),true);Checkbox(P("allow-demo"),ref particleAllowDemonstration);
         float height = PickerBodyHeight();
         float sidebar = PickerSidebarWidth();
         var work = Stopwatch.StartNew();
@@ -89,7 +97,7 @@ internal sealed partial class DirectorCreationWorkspace
         }
         // Hidden cards have no running clock and consume no simulation time. Bound retained snapshots.
         foreach (var key in particlePreviews.Where(p => p.Value.LastFrame != ImGui.GetFrameCount()).OrderByDescending(p => p.Value.LastFrame).Skip(48).Select(p => p.Key).ToArray())
-            particlePreviews.Remove(key);
+            {particlePreviews[key].Dispose();particlePreviews.Remove(key);}
 
         var selected = resources.Entries.FirstOrDefault(r => r.Id == particleResourceId);
         EllipsizedParticleText(error.Length > 0 ? error : selected?.Variant ?? L("creation-particle-pick-hint"), ImGui.GetContentRegionAvail().X);
@@ -98,7 +106,7 @@ internal sealed partial class DirectorCreationWorkspace
         if (PickerAction("creation-particle-import-selected", true)) Run(() => ImportParticleResource(Runtime.CursorPosition()));
         ImGui.EndDisabled();
         if (PickerAction("creation-particle-blank")) { AddObject(CreationObjectKind.Particle); auxiliary = ""; }
-        if (PickerAction("creation-particle-rescan")) { resources.Start(true); particleResourceId = ""; particleCategory = ""; particlePreviews.Clear(); }
+        if (PickerAction("creation-particle-rescan")) { resources.Start(true); particleResourceId = ""; particleCategory = ""; ClearParticlePreviews(); }
         if (PickerAction("creation-cancel")) auxiliary = "";
         EndPickerActions();
     }
@@ -115,12 +123,13 @@ internal sealed partial class DirectorCreationWorkspace
         var selected = entries.FirstOrDefault(r => r.Id == particleResourceId);
         if (selected is null) return;
         var obj = ParticleResourceObject(entries.Where(r => r.Kind == selected.Kind && r.Family == selected.Family && r.Variant == selected.Variant), position, Session.Time);
-        obj.ParticleEffect!.Validate();
+        if(!particleImportOriginal)DirectorParticlePreparation.Prepare(obj.ParticleEffect!,entries.Where(r=>r.Kind==selected.Kind&&r.Family==selected.Family&&r.Variant==selected.Variant).ToArray(),particleAllowDemonstration);
+        obj.ParticleEffect!.Upgrade();obj.ParticleEffect.Validate();
         Session.Edit(L("creation-particle-import-selected"), p => p.Objects.Add(obj));
         Select(obj);
         particleEmitter = obj.ParticleEffect.Emitters[0].Id;
         auxiliary = "";
-        particlePreviews.Clear();
+        ClearParticlePreviews();
     }
 
     private static CreationSceneObject ParticleResourceObject(IEnumerable<DirectorParticleResource> resources, CreationVector position, double time)
@@ -196,7 +205,7 @@ internal sealed partial class DirectorCreationWorkspace
 
     // Thumbnails use the same native parameter evaluator as the viewport, in an isolated,
     // small environment. No global game particle pool or document clock is touched.
-    private sealed class ParticleCardPreview
+    private sealed class ParticleCardPreview : IDisposable
     {
         internal DirectorCreationParticleSimulation? Simulation { get; private set; }
         internal string Error { get; private set; } = "";
@@ -204,28 +213,31 @@ internal sealed partial class DirectorCreationWorkspace
         internal bool HasCompletedFrame { get; private set; }
         internal bool SampleEmission { get; private set; }
         private double target, clock = ImGui.GetTime();
-        private Vector2 center;
-        private float extent = 1;
-        private bool fitted;
+        private readonly DirectorPickerMeshPreview previewTarget=new();
+        internal Func<string,int> TextureSource=_=>0;
+        internal int Texture=>previewTarget.Texture;
+        public void Dispose()=>previewTarget.Dispose();
         internal ParticleCardPreview(DirectorParticleResource[] resources)
         {
             try
             {
                 var obj = ParticleResourceObject(resources, default, 0);
-                // Runtime-controlled resources such as fire ship with Quantity=0.
-                // Only the isolated thumbnail receives demonstration particles; imports retain the original values.
-                foreach (var emitter in obj.ParticleEffect!.Emitters)
-                    if (CreationParticleFields.Find(emitter.Properties, "Quantity") is System.Text.Json.Nodes.JsonObject quantity
-                        && CreationParticleFields.Number(quantity, "avg") == 0 && CreationParticleFields.Number(quantity, "var") == 0
-                        && CreationParticleFields.Number(quantity, "offset") == 0)
-                    {
-                        CreationParticleFields.Set(emitter.Properties, "Quantity", CreationParticleFields.Nat(1));
-                        SampleEmission = true;
-                    }
+                SampleEmission=DirectorParticlePreparation.Prepare(obj.ParticleEffect!,resources,true);obj.ParticleEffect!.Upgrade();
                 Simulation = new(new() { Objects = [obj] }, (_, _) => Matrix4x4.Identity,
                     new ParticleThumbnailEnvironment(resources.Any(r => CreationParticleFields.Find(r.Properties, "DieInAir")?.ToString().Equals("true", StringComparison.OrdinalIgnoreCase) == true)));
             }
             catch (Exception e) { Error = e.Message; }
+        }
+        internal ParticleCardPreview(CreationParticleEffect effect)
+        {
+            try
+            {
+                var copy=CreationJson.Clone(effect);copy.Upgrade();
+                var obj=new CreationSceneObject{Kind=CreationObjectKind.Particle,ParticleEffect=copy,ParticleDuration=5};
+                bool trail=copy.AllNodes().Any(e=>e.Modules?.Geometry==ParticleGeometry.Trail);
+                Simulation=new(new(){Objects=[obj]},(_,t)=>trail?Matrix4x4.CreateTranslation((float)Math.Sin(t*3),0,(float)Math.Cos(t*3)):Matrix4x4.Identity,new ParticleThumbnailEnvironment(copy.Name=="bubbles"));
+            }
+            catch(Exception e){Error=e.Message;}
         }
         internal void Advance()
         {
@@ -243,62 +255,18 @@ internal sealed partial class DirectorCreationWorkspace
         internal void Draw(ImDrawListPtr draw, Vector2 min, Vector2 max)
         {
             if (Simulation is null || Error.Length > 0 || max.Y <= min.Y) return;
-            var particles = Simulation.Particles;
-            if (particles.Count == 0) return;
-            var rotationView = PickerRotation(ImGui.GetTime());
-            Vector3 View(Vector3 p) => Vector3.Transform(p, rotationView);
-            Vector2 Project(Vector3 p) { var v = View(p); return new(v.X, -v.Y); }
-            var lo = new Vector2(float.MaxValue); var hi = new Vector2(float.MinValue);
-            foreach (var p in particles)
+            var particles=Simulation.Particles;if(particles.Count==0&&Simulation.Ribbons.Count==0)return;
+            try
             {
-                var pos = Project(p.Position.Float());
-                float radius = (float)p.Size * (p.ShapeScale == default ? 1 : Math.Max(1, p.ShapeScale.Float().Length()));
-                lo = Vector2.Min(lo, pos - new Vector2(radius)); hi = Vector2.Max(hi, pos + new Vector2(radius));
+                previewTarget.SetParticles(particles,ImGui.GetTime(),TextureSource,Simulation.Ribbons);
+                previewTarget.Render(ImGui.GetTime(),(max.X-min.X)/(max.Y-min.Y));
+                draw.AddImage((nint)previewTarget.Texture,min,max,new(0,1),new(1,0));
             }
-            var nextCenter = (lo + hi) * .5f;
-            float nextExtent = Math.Max(.6f, Math.Max(hi.X - lo.X, hi.Y - lo.Y));
-            center = fitted ? Vector2.Lerp(center, nextCenter, .12f) : nextCenter;
-            extent = fitted ? Math.Max(nextExtent, extent * .98f) : nextExtent;
-            fitted = true;
-            float scale = Math.Max(1, Math.Min(max.X - min.X, max.Y - min.Y) - 12) / extent;
-            Vector2 Screen(Vector3 p) => (min + max) * .5f + (Project(p) - center) * scale;
-            foreach (var p in particles.OrderBy(p => View(p.Position.Float()).Z))
-            {
-                uint Color(double shade, double alpha = 1) => ImGui.ColorConvertFloat4ToU32(new(
-                    (float)Math.Clamp(p.Color.X * shade, 0, 1), (float)Math.Clamp(p.Color.Y * shade, 0, 1),
-                    (float)Math.Clamp(p.Color.Z * shade, 0, 1), (float)Math.Clamp(p.Alpha * alpha, 0, 1)));
-                var pos = p.Position.Float();
-                if (p.Cube)
-                {
-                    var shape = p.ShapeScale == default ? Vector3.One : p.ShapeScale.Float();
-                    var rotation = p.ShapeRotation == default ? Quaternion.Identity : p.ShapeRotation;
-                    var spin = Quaternion.CreateFromAxisAngle(Vector3.UnitZ, (float)(p.Rotation * Math.PI / 180));
-                    var points = Enumerable.Range(0, 8).Select(i => pos + Vector3.Transform(Vector3.Transform(new Vector3((i & 1) == 0 ? -.5f : .5f, (i & 2) == 0 ? -.5f : .5f, (i & 4) == 0 ? -.5f : .5f) * shape * (float)p.Size, spin), rotation)).ToArray();
-                    double glow = Math.Clamp(p.Glow, 0, 1);
-                    foreach (var face in new int[][] { [0,1,3,2], [4,6,7,5], [0,4,5,1], [2,3,7,6], [0,2,6,4], [1,5,7,3] }
-                        .OrderBy(f => f.Sum(i => View(points[i]).Z)))
-                    {
-                        var normal = Vector3.Cross(View(points[face[1]] - points[face[0]]), View(points[face[2]] - points[face[0]]));
-                        double shade = normal.LengthSquared() < 1e-10f ? 1 : .65 + .35 * Math.Abs(Vector3.Dot(Vector3.Normalize(normal), Vector3.Normalize(new Vector3(-.4f, 1, 1))));
-                        draw.AddQuadFilled(Screen(points[face[0]]), Screen(points[face[1]]), Screen(points[face[2]]), Screen(points[face[3]]), Color(shade + (1 - shade) * glow));
-                    }
-                }
-                else
-                {
-                    var c = Screen(pos); float radius = Math.Max(.5f, (float)p.Size * scale * .5f);
-                    if (p.Soft)
-                        for (int ring = 4; ring > 0; ring--) draw.AddCircleFilled(c, radius * ring / 4, Color(1, .12), 12);
-                    else
-                    {
-                        float angle = (float)(p.Rotation * Math.PI / 180);
-                        var x = new Vector2(MathF.Cos(angle), MathF.Sin(angle)) * radius;
-                        var y = new Vector2(-x.Y, x.X);
-                        draw.AddQuadFilled(c - x - y, c + x - y, c + x + y, c - x + y, Color(1));
-                    }
-                }
-            }
+            catch(Exception e){Error=e.Message;}
         }
     }
+    private void ClearParticlePreviews(){foreach(var preview in particlePreviews.Values)preview.Dispose();particlePreviews.Clear();}
+
     private sealed class ParticleThumbnailEnvironment(bool liquid) : ICreationParticleEnvironment
     {
         public CreationVector Wind => new(.15, 0, 0);

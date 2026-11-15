@@ -49,6 +49,8 @@ internal sealed partial class DirectorCreationWorkspace
         public bool Browser { get; set; } = true;
         public bool Timeline { get; set; } = true;
         public bool Particles { get; set; }
+        public float ParticleSplit {get;set;}=.4f;
+        public string ParticlePage {get;set;}="common";
         public bool ExactParts { get; set; }
         public bool FreePose { get; set; }
         public bool BonePoints { get; set; }
@@ -77,6 +79,7 @@ internal sealed partial class DirectorCreationWorkspace
     {
         activeViewKey=ViewKey;
         selectedTimelineKeys.Clear();
+        particleTreeRatio=Math.Clamp(editorPreferences.ParticleSplit,.15f,.75f);particlePage=editorPreferences.ParticlePage??"common";
         editorPreferences.Views ??= new();
         var state=editorPreferences.Views.GetValueOrDefault(ViewKey)??editorPreferences.DefaultTimeline;
         timelineZoom=double.IsFinite(state.Zoom)?Math.Clamp(state.Zoom,.05,256):1;timelineStart=double.IsFinite(state.Start)?Math.Max(0,state.Start):0;
@@ -89,6 +92,7 @@ internal sealed partial class DirectorCreationWorkspace
     }
     private void RestoreEditorPreferences()
     {
+        particleTreeRatio=Math.Clamp(editorPreferences.ParticleSplit,.15f,.75f);particlePage=editorPreferences.ParticlePage??"common";
         editorPreferences.Views ??= new();
         editorPreferences.Overlay ??= new();editorPreferences.Overlay.Normalize();
         editorPreferences.Defaults ??= new();editorPreferences.Defaults.Normalize();
@@ -109,6 +113,7 @@ internal sealed partial class DirectorCreationWorkspace
     }
     private void PersistEditorPreferences()
     {
+        editorPreferences.ParticleSplit=particleTreeRatio;editorPreferences.ParticlePage=particlePage;
         SaveTimelineView();editorPreferences.LayoutVersion=host.MigrateCreationTools?0:3;
         editorPreferences.Tools=toolsPanel;editorPreferences.Properties=properties;editorPreferences.View=view;
         editorPreferences.Bones=bonesPanel;editorPreferences.Ik=ikPanel;editorPreferences.Actions=actionsPanel;

@@ -199,7 +199,8 @@ internal sealed class DirectorCreationParticleOverrides : IDisposable
     internal string Notice {get;private set;}="";
     internal void Apply(IEnumerable<DirectorParticleResource> resources,CreationSceneObject obj,CreationParticleEmitter emitter)
     {
-        DirectorParticleNativeAdapter.RequireSafe(emitter.Properties);
+        if(obj.ParticleEffect?.Version>=3 && ParticleCompatibility.Issues(new CreationParticleEffect {Version=3,Emitters=[emitter]}).Count>0)throw new InvalidOperationException("This node uses Director-only features; native apply would omit them.");
+        DirectorParticleNativeAdapter.RequireSafe(emitter.NativeProperties());
         var targets=resources.ToArray();
         if(targets.Length==0||targets.Any(r=>r.Collectible is null))throw new InvalidOperationException("This asset has no supported collectible particle entry point.");
         foreach(var c in targets.Select(r=>r.Collectible!).Distinct())
@@ -214,7 +215,7 @@ internal sealed class DirectorCreationParticleOverrides : IDisposable
         {
             var c=r.Collectible!;
             originals.TryAdd(c,c.ParticleProperties);
-            bindings[(c,r.Index)]=(obj.Id,emitter.Id,(JsonObject)emitter.Properties.DeepClone());
+            bindings[(c,r.Index)]=(obj.Id,emitter.Id,emitter.NativeProperties());
         }
         Refresh(null);active=this;
         {
@@ -230,9 +231,14 @@ internal sealed class DirectorCreationParticleOverrides : IDisposable
         {
             var b=bindings[key];
             if(project is null)continue;
-            var e=project.Objects.FirstOrDefault(o=>o.Id==b.Object)?.ParticleEffect?.Emitters.FirstOrDefault(e=>e.Id==b.Emitter);
+            var e=project.Objects.FirstOrDefault(o=>o.Id==b.Object)?.ParticleEffect?.AllNodes().FirstOrDefault(e=>e.Id==b.Emitter);
             if(e is null){bindings.Remove(key);continue;}
-            try{DirectorParticleNativeAdapter.RequireSafe(e.Properties);bindings[key]=(b.Object,b.Emitter,(JsonObject)e.Properties.DeepClone());}
+            try
+            {
+                if(e.Modules is not null && ParticleCompatibility.Issues(new(){Version=3,Emitters=[e]}).Count>0)
+                    throw new InvalidOperationException(e.Name+": native replacement restored because Director-only features were added.");
+                DirectorParticleNativeAdapter.RequireSafe(e.NativeProperties());bindings[key]=(b.Object,b.Emitter,e.NativeProperties());
+            }
             catch(Exception error){bindings.Remove(key);Notice=error.Message;}
         }
         lock(gate)

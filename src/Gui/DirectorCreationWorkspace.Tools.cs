@@ -119,6 +119,7 @@ internal sealed partial class DirectorCreationWorkspace
         }
         if(ActiveTool is not CreationTool.Select && ImGui.IsItemHovered())ImGui.SetTooltip(L("creation-axis-space-help"));
         ImGui.EndDisabled();
+        DrawParticleTools();
         host.MeasureCreationToolsHeight(ImGui.GetCursorPosY()+ImGui.GetStyle().WindowPadding.Y);
     }
     private void DrawActorActionPicker(CreationSceneObject actor)

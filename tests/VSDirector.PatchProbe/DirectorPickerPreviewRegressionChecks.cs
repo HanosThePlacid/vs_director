@@ -93,9 +93,16 @@ internal static partial class DirectorImGuiProbe
         for(int i=0;i<definitions.Count;i++)resources.SetValue(Activator.CreateInstance(resourceType,BindingFlags.Public|BindingFlags.NonPublic|BindingFlags.Instance,null,
             ["fire/"+i,"game:fire","game:fire","game:fire","block",i,definitions[i]!.DeepClone(),null],null),i);
         var previewType=workspaceType.GetNestedType("ParticleCardPreview",BindingFlags.NonPublic)!;
-        var preview=Activator.CreateInstance(previewType,BindingFlags.Public|BindingFlags.NonPublic|BindingFlags.Instance,null,[resources],null)!;
+        using var preview=(IDisposable)Activator.CreateInstance(previewType,BindingFlags.Public|BindingFlags.NonPublic|BindingFlags.Instance,null,[resources],null)!;
         AccessTools.Method(previewType,"Advance").Invoke(preview,null);
         var simulation=(DirectorCreationParticleSimulation)AccessTools.Property(previewType,"Simulation").GetValue(preview)!;
+        // Native fractional quantities can legitimately emit nothing at t=0.
+        // Drive the thumbnail clock through a bounded interval without wall-clock waits.
+        for(int frame=0;frame<60&&simulation.Particles.Count==0;frame++)
+        {
+            AccessTools.Field(previewType,"clock").SetValue(preview,ImGuiNET.ImGui.GetTime()-.05);
+            AccessTools.Method(previewType,"Advance").Invoke(preview,null);
+        }
         Check((bool)AccessTools.Property(previewType,"SampleEmission").GetValue(preview)! && simulation.Particles.Count>0,"game:fire still has no demonstration preview");
         Check(definitions.All(d=>CreationParticleFields.Number(CreationParticleFields.Find(d!.AsObject(),"quantity")!.AsObject(),"avg")==0),"Preview changed fire source quantities");
 

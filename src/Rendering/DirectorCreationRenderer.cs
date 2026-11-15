@@ -32,6 +32,7 @@ internal sealed partial class DirectorCreationRenderer : IRenderer
     }
     internal bool Visible { get; set; } = true;
     internal IReadOnlyList<CreationSimulatedParticle> AdvancedParticles { get; set; } = [];
+    internal IReadOnlyList<CreationParticleRibbon> ParticleRibbons { get; set; } = [];
     internal string Error { get; private set; } = "";
     public double RenderOrder => .69;
     public int RenderRange => 9999;
@@ -81,7 +82,7 @@ internal sealed partial class DirectorCreationRenderer : IRenderer
                 .ThenByDescending(s => Vector3.DistanceSquared(s.World.Translation, cameraLocal)))
             {
                 var obj = state.Source;
-                shader.Uniform("particleMask", 0);
+                shader.Uniform("particleMask", 0);shader.Uniform("particleUv",0f,0f,1f,1f);
                 shader.Uniform("vertexColorMode", 0);
                 if (project.Visuals.World.ShowEntities == false && obj.Kind is CreationObjectKind.Model or CreationObjectKind.Item) continue;
                 if (!project.Visuals.World.ShowPlayers && obj.ActorSource?.EntityCode.Contains("player", StringComparison.OrdinalIgnoreCase) == true) continue;
@@ -144,7 +145,7 @@ internal sealed partial class DirectorCreationRenderer : IRenderer
                     if(obj.ParticleEffect is null)RenderParticles(state, obj, origin);
                 }
             }
-            if(project.Visuals.Particles.ShowParticles)RenderAdvancedParticles(frame.Objects);
+            if(project.Visuals.Particles.ShowParticles){RenderAdvancedParticles(frame.Objects);RenderParticleRibbons(frame.Objects);}
             revision = session.Revision; Error = "";
         }
         catch (Exception e) { Error = Message(e.Message); }
@@ -256,13 +257,18 @@ internal sealed partial class DirectorCreationRenderer : IRenderer
     {
         var program = target ?? shader!;
         if (source.Length == 0) { program.Uniform("textured", 0); return; }
+        int texture=ParticleTexture(project,source);
+        program.Uniform("textured", 1); program.BindTexture2D("tex", texture, 0);
+    }
+    internal int ParticleTexture(DirectorCreationProject project,string source,byte[]? embedded=null)
+    {
+        if(source.Length==0)return 0;
         string key = project.Id + "/" + source;
         if (!textures.TryGetValue(key, out int texture))
         {
-            if (source.StartsWith("assets/", StringComparison.Ordinal))
+            if (embedded is not null || source.StartsWith("assets/", StringComparison.Ordinal))
             {
-                string path = session.Store.AssetPath(project.Id, source);
-                using var stream = new MemoryStream(File.ReadAllBytes(path)); using var bitmap = new BitmapExternal(stream, api.Logger);
+                using var stream = new MemoryStream(embedded??File.ReadAllBytes(session.Store.AssetPath(project.Id, source))); using var bitmap = new BitmapExternal(stream, api.Logger);
                 var loaded = new LoadedTexture(api); api.Render.LoadTexture(bitmap, ref loaded); ownedTextures.Add(loaded); texture = loaded.TextureId;
             }
             else
@@ -273,7 +279,7 @@ internal sealed partial class DirectorCreationRenderer : IRenderer
             }
             textures[key] = texture;
         }
-        program.Uniform("textured", 1); program.BindTexture2D("tex", texture, 0);
+        return texture;
     }
     private static MeshData Plane(CreationSceneObject obj)
     {
@@ -312,6 +318,7 @@ internal sealed partial class DirectorCreationRenderer : IRenderer
     internal static float[] Array(Matrix4x4 m) => [m.M11,m.M12,m.M13,m.M14,m.M21,m.M22,m.M23,m.M24,m.M31,m.M32,m.M33,m.M34,m.M41,m.M42,m.M43,m.M44];
     internal void ReloadTextures()
     {
+        dynamicParticles?.Dispose();dynamicParticles=null;
         DisposeSelectionBuffers();
         foreach (var mesh in meshes.Values) mesh.Dispose(); meshes.Clear(); geometry.Clear();
         foreach (var t in ownedTextures) t.Dispose(); ownedTextures.Clear(); textures.Clear(); revision = -1;

@@ -56,7 +56,7 @@ internal sealed partial class DirectorSettingsDialog : DirectorImGuiDialog
 
     internal void OpenReplayStorage()
     {
-        page = SettingsPage.Replay;
+        SelectCategory(SettingsPage.Replay);
         if (IsOpened()) return;
         ToggleOpen();
     }

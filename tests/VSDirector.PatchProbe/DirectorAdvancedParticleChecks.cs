@@ -91,6 +91,13 @@ internal static class DirectorAdvancedParticleChecks
         Check(item.ParticleProperties[0].Quantity.avg==5,"Undo/edit refresh did not update applied provider");
         AccessTools.Method(managerType,"Restore").Invoke(manager,[null]);
         Check(ReferenceEquals(item.ParticleProperties,original),"Restore all did not restore exact original providers");
+        var extended=new CreationSceneObject{Kind=CreationObjectKind.Particle,ParticleEffect=CreationParticleEffect.Create()};
+        var extendedEmitter=extended.ParticleEffect.Emitters[0];extendedEmitter.Properties["Quantity"]=CreationParticleFields.Nat(7);
+        AccessTools.Method(managerType,"Apply").Invoke(manager,[resources,extended,extendedEmitter]);
+        extendedEmitter.Modules!.Drag=1;
+        AccessTools.Method(managerType,"Refresh").Invoke(manager,[new DirectorCreationProject{Objects=[extended]}]);
+        Check(ReferenceEquals(item.ParticleProperties,original),"Adding Director modules failed to restore an applied native override");
+        AccessTools.Method(managerType,"Restore").Invoke(manager,[null]);
         item.ParticleProperties=[native,(AdvancedParticleProperties)Call("Write",unsafeProperties)];
         rejected=false;try{AccessTools.Method(managerType,"Apply").Invoke(manager,[resources,obj,emitter]);}catch(TargetInvocationException error){rejected=error.InnerException!.Message.Contains("VelocityEvolve");}
         Check(rejected&&item.ParticleProperties[0]==native,"Unsafe native sibling accepted or partially applied");

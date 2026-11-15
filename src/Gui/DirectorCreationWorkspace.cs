@@ -1,4 +1,4 @@
-﻿using static VSDirector.Gui.DirectorCreationText;
+using static VSDirector.Gui.DirectorCreationText;
 using System.Numerics;
 using System.Text.Json;
 using System.Text.Json.Nodes;
@@ -32,16 +32,28 @@ internal sealed partial class DirectorCreationWorkspace
     private Guid displayedProject;
     private long displayedGeneration;
     private bool revealPanels;
+    private readonly HashSet<string> revealWindows = new(StringComparer.Ordinal);
+    private void ShowCreationPanel(string panel)
+    {
+        switch(panel)
+        {
+            case "browser": browser=true;break;
+            case "properties": properties=true;break;
+            case "timeline": timeline=true;break;
+            case "view": view=true;break;
+        }
+        revealWindows.Add("vsdirector-creation-"+panel);
+    }
     internal DirectorCreationWorkspace(ICoreClientAPI api, VSDirectorModSystem owner, DirectorImGuiWorkspace host)
     { this.api = api; this.owner = owner; this.host = host; host.AppearanceOverlay=DrawAppearanceOverlay; try { editorPreferences=api.LoadModConfig<EditorPreferences>("vsdirector-creation-editor.json")??new(); } catch { editorPreferences=new(); } RestoreEditorPreferences(); }
     internal void Menu(string menu) { Enter(); requestedMenu = menu; }
-    internal void Suspend() { ClearActorPickerPreviews(); particlePreviews.Clear(); if (Active) { Runtime.Suspend(force: true); owner.LeaveCreationMode(); Active = false; host.SetCreationMode(false); } host.CreationPreviewVisible = false; }
+    internal void Suspend() { ClearActorPickerPreviews(); ClearParticlePreviews(); if (Active) { Runtime.Suspend(force: true); owner.LeaveCreationMode(); Active = false; host.SetCreationMode(false); } host.CreationPreviewVisible = false; }
     internal void Draw()
     {
         if (!Active) return;
         DrawToolbar(); DrawPendingTransition();
         if (!Active) return;
-        DrawAuxiliary();DrawPreferences();
+        DrawAuxiliary();DrawPreferences();DrawParticleCurveWindow();
         if (auxiliary is "actors" or "particles") { host.CreationPreviewVisible = false; DrawModal(); return; }
         if (requestedMenu.Length > 0) { ImGui.OpenPopup("creation-" + requestedMenu); requestedMenu = ""; }
         foreach (string menu in new[] { "创作", "项目", "编辑", "创建", "模型", "动画", "窗口", "设置" })
@@ -93,9 +105,9 @@ internal sealed partial class DirectorCreationWorkspace
         SyncSelection();
         ImGui.BeginDisabled(Runtime.Exporting || Runtime.PerformanceActive);
         if (toolsPanel) Panel(L("creation-tools") + "###vsdirector-creation-tools", ref toolsPanel, host.CreationToolsDockId, DrawTools);
-        if (browser) Panel(L("creation-objects") + "###vsdirector-creation-browser", ref browser, host.LeftDockId, DrawBrowser, revealPanels);
+        if (browser) Panel(L("creation-object-list") + "###vsdirector-creation-browser", ref browser, host.LeftDockId, DrawParticleBrowser, revealPanels);
         if (view) Panel(L("creation-view") + "###vsdirector-creation-view", ref view, host.InspectorDockId, DrawView);
-        if (properties) Panel(modelContext.Length > 0 ? L("creation-model-properties") + "###vsdirector-creation-properties" : L("creation-creation-properties") + "###vsdirector-creation-properties", ref properties, host.InspectorDockId, DrawProperties, revealPanels);
+        if (properties) Panel(modelContext.Length > 0 ? L("creation-model-properties") + "###vsdirector-creation-properties" : L("creation-properties") + "###vsdirector-creation-properties", ref properties, host.InspectorDockId, DrawProperties, revealPanels);
         if (particlesPanel) Panel(L("creation-particle-editor")+"###vsdirector-creation-particles",ref particlesPanel,host.InspectorDockId,DrawParticlePanel,focusParticles);
         focusParticles=false;
         if (modelContext.Length == 0)
@@ -125,10 +137,17 @@ internal sealed partial class DirectorCreationWorkspace
     private void Panel(string title, ref bool open, uint dock, Action draw, bool reveal = false, ImGuiWindowFlags flags = ImGuiWindowFlags.None)
     {
         if (dock != 0) ImGui.SetNextWindowDockID(dock, reveal ? ImGuiCond.Always : ImGuiCond.FirstUseEver);
-        if (reveal) { ImGui.SetNextWindowCollapsed(false); ImGui.SetNextWindowFocus(); }
+        bool requested=revealWindows.Remove(title[(title.LastIndexOf("###",StringComparison.Ordinal)+3)..]);
+        if (reveal || requested) { ImGui.SetNextWindowCollapsed(false); ImGui.SetNextWindowFocus(); }
         ImGui.SetNextWindowSize(new Vector2(320, title.EndsWith("###vsdirector-creation-tools", StringComparison.Ordinal) ? 72 : 320) * DirectorImGuiTheme.Scale, ImGuiCond.FirstUseEver);
         bool visible = ImGui.Begin(title, ref open, flags);
         ImGui.SetWindowFontScale(DirectorImGuiTheme.Scale);
+        if(requested && ImGui.GetWindowDockID()==0)
+        {
+            var position=ImGui.GetWindowPos();var size=ImGui.GetWindowSize();var display=ImGui.GetIO().DisplaySize;
+            if(position.X+size.X<32||position.Y+size.Y<32||position.X>display.X-32||position.Y>display.Y-32)
+                ImGui.SetWindowPos(Vector2.Clamp(position,Vector2.Zero,Vector2.Max(Vector2.Zero,display-Vector2.Min(size,display))));
+        }
         host.TrackCreationDock(title);
         try { if (visible) draw(); } finally { ImGui.End(); }
     }
@@ -241,14 +260,14 @@ internal sealed partial class DirectorCreationWorkspace
                 ImGui.EndMenu();
             }
             Item(L("creation-tools"), () => toolsPanel = !toolsPanel, selected: toolsPanel);
-            Item(L("creation-view"), () => view = true, selected: view);
+            Item(L("creation-view"), () => ShowCreationPanel("view"), selected: view);
             Item(L("creation-particle-editor"),()=>{particlesPanel=true;focusParticles=true;},selected:particlesPanel);
             Item(L("creation-bones-tab"), () => { bonesPanel = true; focusRigPanel = "bones"; }, selected: bonesPanel);
             Item("IK", () => { ikPanel = true; focusRigPanel = "ik"; }, selected: ikPanel);
             Item(L("creation-actions-tab"), () => { actionsPanel = true; focusRigPanel = "actions"; }, selected: actionsPanel);
-            Item(L("creation-creation-list"), () => browser = true, selected: browser);
-            Item(L("creation-creation-properties"), () => properties = true, selected: properties);
-            Item(L("creation-creation-timeline"), () => timeline = true, enabled: modelContext.Length == 0, selected: timeline && modelContext.Length == 0);
+            Item(L("creation-object-list"), () => ShowCreationPanel("browser"), selected: browser);
+            Item(L("creation-properties"), () => ShowCreationPanel("properties"), selected: properties);
+            Item(L("creation-creation-timeline"), () => ShowCreationPanel("timeline"), enabled: modelContext.Length == 0, selected: timeline && modelContext.Length == 0);
             Item(L("creation-camera-preview"), () => Runtime.Preview = !Runtime.Preview, selected: Runtime.Preview);
             Item(L("creation-composition-guides"), () => Runtime.Guides = !Runtime.Guides, selected: Runtime.Guides);
             Item(L("creation-reset-layout"), () => { toolsPanel=properties=browser=timeline=view=true;bonesPanel=ikPanel=actionsPanel=false;host.ResetLayout(); });
@@ -282,7 +301,7 @@ internal sealed partial class DirectorCreationWorkspace
     private void AddObject(CreationObjectKind kind, Guid asset = default)
     {
         var obj = new CreationSceneObject { Kind = kind, AssetId = asset, ResourceCode = kind == CreationObjectKind.Item ? "game:torch" : "", Name = kind switch { CreationObjectKind.Camera => L("creation-camera"), CreationObjectKind.Group => L("creation-group"), CreationObjectKind.Text => L("creation-text"), CreationObjectKind.Particle => L("creation-particles"), CreationObjectKind.Item => L("creation-item-block"), _ => L("creation-image") }, Transform = new() { Position = Runtime.CursorPosition() } };
-        if(kind==CreationObjectKind.Particle){obj.ParticleStart=Session.Time;obj.ParticleEffect=new(){Name=obj.Name};}
+        if(kind==CreationObjectKind.Particle){obj.ParticleStart=Session.Time;obj.ParticleEffect=CreationParticleEffect.Create();obj.ParticleEffect.Name=obj.Name;}
         Session.Edit(L("creation-create-5") + obj.Name, p => { p.Objects.Add(obj); if (kind == CreationObjectKind.Camera && p.CameraId == Guid.Empty) p.CameraId = obj.Id; }); Select(obj);
         if (kind == CreationObjectKind.Camera) Runtime.CaptureCamera(obj);
     }

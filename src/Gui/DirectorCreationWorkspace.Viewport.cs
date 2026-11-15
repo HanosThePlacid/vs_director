@@ -26,7 +26,7 @@ internal sealed partial class DirectorCreationWorkspace
     private readonly Dictionary<Guid,(float Radius,bool Diamond)> markerHits=new();
     private bool MarkerHit(Guid id,Vector2 point,Vector2 mouse)
     {if(!markerHits.TryGetValue(id,out var hit))return false;var d=Vector2.Abs(point-mouse);return hit.Diamond?d.X+d.Y<=hit.Radius:Math.Max(d.X,d.Y)<=hit.Radius;}
-    internal bool CapturePointer(int x, int y) => Active && Project is not null && (hoveredPosePart != Guid.Empty || hoveredSceneObject != Guid.Empty || gizmoUsing || gizmoHover || poseHandles.Any(p=>{var d=Vector2.Abs(p.Point-new Vector2(x,y));return d.X+d.Y<=Overlay.Size*DirectorImGuiTheme.Scale;}) || objectPoints.Any(p=>MarkerHit(p.Id,p.Point,new(x,y))) || bonePoints.Any(p=>Vector2.Distance(p.Point,new(x,y))<=5*DirectorImGuiTheme.Scale));
+    internal bool CapturePointer(int x, int y) => Active && Project is not null && (particleGuideDragging || particleGuideHover || hoveredPosePart != Guid.Empty || hoveredSceneObject != Guid.Empty || gizmoUsing || gizmoHover || poseHandles.Any(p=>{var d=Vector2.Abs(p.Point-new Vector2(x,y));return d.X+d.Y<=Overlay.Size*DirectorImGuiTheme.Scale;}) || objectPoints.Any(p=>MarkerHit(p.Id,p.Point,new(x,y))) || bonePoints.Any(p=>Vector2.Distance(p.Point,new(x,y))<=5*DirectorImGuiTheme.Scale));
     internal bool Manipulating => Active && gizmoUsing;
     private void DrawAppearanceOverlay()
     {
@@ -82,6 +82,7 @@ internal sealed partial class DirectorCreationWorkspace
                 return min + new Vector2((c.X/c.W+1)*.5f*size.X,(1-c.Y/c.W)*.5f*size.Y);
             }
             void Line(Vector3 a, Vector3 b, uint color) { if (Screen(a) is { } s && Screen(b) is { } e) draw.AddLine(s,e,color,1.5f*DirectorImGuiTheme.Scale); }
+            if(DrawParticleGuides(draw,vp,min,size,Screen,Line))return;
             var rigActor = RigActor;
             if (PosePicking && rigActor is not null && frame.Objects.TryGetValue(rigActor.Id, out var pickState)
                 && project.Models.Find(m => m.Id == rigActor.ModelId) is { } pickModel)

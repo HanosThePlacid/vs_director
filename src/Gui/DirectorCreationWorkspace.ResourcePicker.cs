@@ -6,15 +6,19 @@ namespace VSDirector.Gui;
 
 internal sealed partial class DirectorCreationWorkspace
 {
-    private static float PickerBodyHeight() => Math.Max(1, ImGui.GetContentRegionAvail().Y
-        - ImGui.GetTextLineHeightWithSpacing() - ImGui.GetFrameHeightWithSpacing() - ImGui.GetStyle().ScrollbarSize - ImGui.GetStyle().ItemSpacing.Y);
-
+    private float pickerFooterHeight;
+    private float PickerBodyHeight()
+    {
+        string[] actions=auxiliary=="actors"?["creation-actor-import-selected","creation-record-world-actor","creation-cancel"]:
+            particleChooseLibrary?["creation-particle-import-selected","creation-particle-blank","creation-cancel"]:
+            ["creation-particle-import-selected","creation-particle-blank","creation-particle-rescan","creation-cancel"];
+        float width=actions.Sum(key=>ImGui.CalcTextSize(L(key)).X+ImGui.GetStyle().FramePadding.X*2)+(actions.Length-1)*ImGui.GetStyle().ItemSpacing.X;
+        pickerFooterHeight=ImGui.GetFrameHeightWithSpacing()+(width>ImGui.GetContentRegionAvail().X?ImGui.GetStyle().ScrollbarSize:0);
+        return Math.Max(1,ImGui.GetContentRegionAvail().Y-ImGui.GetTextLineHeightWithSpacing()-pickerFooterHeight-ImGui.GetStyle().ItemSpacing.Y);
+    }
     private static float PickerSidebarWidth() => Math.Min(240 * DirectorImGuiTheme.Scale, ImGui.GetContentRegionAvail().X * .28f);
-
-    // A horizontally scrollable footer keeps every action on one row even at high UI scale.
-    private static void BeginPickerActions()
-        => ImGui.BeginChild("picker-actions", new(0, ImGui.GetFrameHeightWithSpacing() + ImGui.GetStyle().ScrollbarSize), false,
-            ImGuiWindowFlags.HorizontalScrollbar | ImGuiWindowFlags.NoScrollWithMouse);
+    private void BeginPickerActions()
+        => ImGui.BeginChild("picker-actions", new(0,pickerFooterHeight), false,ImGuiWindowFlags.HorizontalScrollbar | ImGuiWindowFlags.NoScrollWithMouse);
     private static bool PickerAction(string key, bool first = false)
     {
         if (!first) ImGui.SameLine();

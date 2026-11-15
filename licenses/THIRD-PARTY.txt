@@ -1,4 +1,4 @@
-﻿VS Director - third-party resources
+VS Director - third-party resources
 
 Tabler Icons 3.34.1
 Copyright (c) 2020-2024 Paweł Kuna
@@ -45,6 +45,15 @@ independently implement resource scanning, restoration, deterministic fixed-step
 timeline simulation, collision queries and batched rendering. Unsupported native
 shader flags are retained with warnings; unsafe native Clone fields reject client
 replacement. No InGameDevTools runtime is bundled. The MIT notice above is retained.
+The v3 module editor additionally references the preview speed/density controls
+and native lifetime/size units in Utils/PreviewParticleSystem.cs. The explicit
+reference-fuel fire recipe in DirectorParticlePreparation.cs follows the behavior
+of Vintage Story BEBehaviorBurning.onAsyncParticles/RandomBlockPos; no game
+behavior is executed by browsing or imported-effect simulation. The reference
+recipe is labelled and does not reproduce all live fuel/face/weather conditions.
+Validation uses the installed Vintage Story 1.22.7.0 assemblies as well as the
+1.22.3 JSON/API reference. Runtime/unknown shader fields remain export-only where
+indicated by the editor; unsupported native application is rejected.
 
 BBS-FS (McHorse and Wemppy)
 Copyright 2025 McHorse
@@ -57,6 +66,19 @@ contextual property organization informed by UIReplaysEditor.java,
 UIKeyframeEditor.java, UIFilmPanel.java and UIPoseEditor.java. Independently implemented for
 Vintage Story Shape, actor attachments and Director creation data; no Minecraft
 assets or BBS-FS runtime are bundled.
+Particle module organization, curve/gradient editing, bounded parameter expressions,
+shape/rate/motion/expiration controls and user preset workflow reference
+ui/particles/UIParticleSchemePanel.java, ui/particles/sections/
+UIParticleSchemeShapeSection.java, UIParticleSchemeRateSection.java,
+UIParticleSchemeMotionSection.java, UIParticleSchemeExpirationSection.java,
+and ui/particles/utils/UICurveEditor.java, UIGradientEditor.java and
+UIMolangExpression.java at the revision above. Independent C# implementations:
+DirectorCreationParticleModules.cs, DirectorParticleExpression.cs,
+DirectorCreationParticleSimulation.Modules.cs, DirectorParticlePresetLibrary.cs,
+DirectorCreationWorkspace.ParticleHierarchy.cs, .ParticleModules.cs,
+.ParticleTimeline.cs, .ParticleLibrary.cs and .ParticlePresetPicker.cs.
+Director expressions and presets use Director's own grammar/schema; they are
+not a MoLang, Bedrock, Snowstorm or BBS file importer. No Java source is bundled.
 Timeline track/all selection and keyframe context operations also reference
 UIKeyframes.java, independently implemented for Director's creation timeline.
 Actor equipment and appearance editing follows BBS-FS's separate actor state

@@ -120,15 +120,15 @@ internal sealed partial class DirectorCreationWorkspace
         {
             var defaults=editorPreferences.DefaultTimeline;
             ImGui.TextWrapped(L("creation-pref-timeline-note"));
-            PrefChoice("creation-pref-track-filter",defaults.Filter,[L("creation-pref-filter-all"),L("creation-creation-properties"),L("creation-pose"),L("creation-pref-filter-clips")],i=>defaults.Filter=i);
+            PrefChoice("creation-pref-track-filter",defaults.Filter,[L("creation-pref-filter-all"),L("creation-properties"),L("creation-pose"),L("creation-pref-filter-clips")],i=>defaults.Filter=i);
             PrefBool("creation-pref-selected-tracks",defaults.SelectedOnly,v=>defaults.SelectedOnly=v);
             PrefBool("creation-pref-keyed-tracks",defaults.KeyedOnly,v=>defaults.KeyedOnly=v);
             PrefBool("creation-pref-curves",defaults.Curves,v=>defaults.Curves=v);
         }
         if(category==3)
         {
-            PrefBool("creation-tools",toolsPanel,v=>toolsPanel=v);PrefBool("creation-creation-list",browser,v=>browser=v);
-            PrefBool("creation-creation-properties",properties,v=>properties=v);PrefBool("creation-creation-timeline",timeline,v=>timeline=v);
+            PrefBool("creation-tools",toolsPanel,v=>toolsPanel=v);PrefBool("creation-object-list",browser,v=>{browser=v;if(v)ShowCreationPanel("browser");});
+            PrefBool("creation-properties",properties,v=>{properties=v;if(v)ShowCreationPanel("properties");});PrefBool("creation-creation-timeline",timeline,v=>timeline=v);
             PrefBool("creation-view",view,v=>view=v);PrefBool("creation-bones-tab",bonesPanel,v=>bonesPanel=v);
             PrefBool("creation-pref-ik-panel",ikPanel,v=>ikPanel=v);PrefBool("creation-actions-tab",actionsPanel,v=>actionsPanel=v);
             PrefBool("creation-particle-editor",particlesPanel,v=>particlesPanel=v);

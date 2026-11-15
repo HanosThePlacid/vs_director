@@ -47,8 +47,16 @@ internal static partial class DirectorImGuiProbe
             ImGui.Begin("particle-card-interaction", ImGuiWindowFlags.NoSavedSettings | ImGuiWindowFlags.NoResize);
             Call("DrawParticleCard", native, Stopwatch.StartNew());
             cardMin = ImGui.GetItemRectMin(); cardMax = ImGui.GetItemRectMax();
-            var vertices = ImGui.GetWindowDrawList().VtxBuffer;
-            redVertices |= Enumerable.Range(0, vertices.Size).Any(i => (vertices[i].col & 255) > 128 && (vertices[i].col & 0xffff00) == 0);
+            foreach(var card in cache.Values)
+            {
+                int texture=(int)AccessTools.Property(card!.GetType(),"Texture").GetValue(card)!;
+                if(texture==0)continue;
+                int previous=OpenTK.Graphics.OpenGL4.GL.GetInteger(OpenTK.Graphics.OpenGL4.GetPName.TextureBinding2D);
+                OpenTK.Graphics.OpenGL4.GL.BindTexture(OpenTK.Graphics.OpenGL4.TextureTarget.Texture2D,texture);
+                var pixels=new byte[256*256*4];OpenTK.Graphics.OpenGL4.GL.GetTexImage(OpenTK.Graphics.OpenGL4.TextureTarget.Texture2D,0,OpenTK.Graphics.OpenGL4.PixelFormat.Rgba,OpenTK.Graphics.OpenGL4.PixelType.UnsignedByte,pixels);
+                OpenTK.Graphics.OpenGL4.GL.BindTexture(OpenTK.Graphics.OpenGL4.TextureTarget.Texture2D,previous);
+                redVertices|=Enumerable.Range(0,256*256).Any(i=>pixels[i*4]>128&&pixels[i*4+1]==0&&pixels[i*4+2]==0&&pixels[i*4+3]>0);
+            }
             ImGui.End(); ImGui.Render();
         }
         void LibraryFrame(float width, float height, bool inspect = false)
@@ -105,6 +113,18 @@ internal static partial class DirectorImGuiProbe
                 RuntimeEnv.GUIScale = scale; LoadCreationProbeLanguage(language);
                 for (int frame = 0; frame < 3; frame++) LibraryFrame(width * scale, 640, frame == 2);
             }
+            Set("particleChooseLibrary",true);Set("particlePresetSearch","");
+            long libraryRevision=session.Revision;double libraryTime=session.Time;
+            foreach(string language in new[]{"zh-cn","en"})
+            foreach(float scale in new[]{1f,2f})
+            foreach(float width in new[]{220f,760f})
+            {
+                RuntimeEnv.GUIScale=scale;LoadCreationProbeLanguage(language);
+                for(int frame=0;frame<3;frame++)LibraryFrame(width*scale,640,frame==2);
+            }
+            Check(session.Revision==libraryRevision&&session.Time==libraryTime,"Preset library browsing changed document or timeline");
+            Set("particleChooseLibrary",false);Call("ClearParticlePreviews");
+            Console.WriteLine("PASS fullscreen preset library/examples, isolated simulation and bilingual narrow layouts");
             Console.WriteLine("PASS particle picker search/tree/grid, live native cube thumbnails, explicit selection/import, source isolation, timing, undo/redo and narrow Chinese/English layouts at 100/150/200%");
             io.DisplaySize = new(960,640); RuntimeEnv.GUIScale = 1; LoadCreationProbeLanguage("zh-cn");
             Set("auxiliary", "particles"); Set("particleSearch", "");
@@ -114,7 +134,7 @@ internal static partial class DirectorImGuiProbe
         finally
         {
             io.MouseDown[0] = false; io.MousePos = new(-1000); io.DisplaySize = display; RuntimeEnv.GUIScale = guiScale;
-            Set("particleSearch", ""); Set("particleResourceId", ""); Set("auxiliary", ""); cache.Clear(); entries.Clear();
+            Set("particleChooseLibrary",false); Set("particleSearch", ""); Set("particleResourceId", ""); Set("auxiliary", ""); Call("ClearParticlePreviews"); entries.Clear();
             session.Open(original); LoadCreationProbeLanguage("zh-cn");
         }
     }

@@ -12,13 +12,14 @@ internal sealed partial class DirectorSettingsDialog
     private string categorySearch = string.Empty;
     private string outlineSearch = string.Empty;
     private bool permissionsExpanded;
+    private bool resetFieldsScroll;
 
     protected override VSImGui.API.CallbackGUIStatus Draw(float deltaSeconds)
     {
         if (docked) return DrawStatus();
         if (Opened)
         {
-            DirectorImGuiLayout.WindowSize(new Vector2(680, 640), new Vector2(340, 300));
+            DirectorImGuiLayout.WindowSize(new Vector2(780, 590), new Vector2(360, 260));
         }
         return base.Draw(deltaSeconds);
     }
@@ -27,6 +28,7 @@ internal sealed partial class DirectorSettingsDialog
     {
         if (!Opened) return;
         using var font = DirectorImGuiRuntime.UseFont(dialog: false);
+        DirectorImGuiLayout.WindowSize(new Vector2(780, 590), new Vector2(360, 260));
         bool opened = Opened;
         bool visible = ImGui.Begin($"{Lang.Get("vsdirector:settings-title")}###vsdirector-settings", ref opened,
             ImGuiWindowFlags.NoBringToFrontOnFocus
@@ -43,14 +45,19 @@ internal sealed partial class DirectorSettingsDialog
     protected override bool OnDraw()
     {
         NormalizePage();
+        ImGui.TextWrapped(Lang.Get("vsdirector:settings-scope"));
         DrawHeader();
         ImGui.Separator();
         float footerHeight = DirectorImGuiLayout.ButtonRowsHeight(
             new[] { "config-reload", "settings-defaults", "cancel", "settings-apply", "settings-ok" }
                 .Select(key => Lang.Get("vsdirector:" + key)));
-        ImGui.BeginChild("settings-content", new Vector2(0, -footerHeight), false);
+        ImGui.BeginChild("settings-content", new Vector2(0, Math.Max(1, ImGui.GetContentRegionAvail().Y - footerHeight)), false);
+        DrawCategoryNavigation();
+        ImGui.BeginChild("settings-fields", Vector2.Zero, false);
+        if (resetFieldsScroll) { ImGui.SetScrollY(0); resetFieldsScroll = false; }
         DrawCategories();
         if (status.Length > 0) { ImGui.Spacing(); ImGui.TextWrapped(status); }
+        ImGui.EndChild();
         ImGui.EndChild();
         ImGui.Separator();
         DrawFooter();
@@ -60,33 +67,63 @@ internal sealed partial class DirectorSettingsDialog
     private void DrawHeader()
     {
         ImGui.SetNextItemWidth(-1);
-        ImGui.InputTextWithHint("##settings-search", Lang.Get("vsdirector:settings-search"), ref categorySearch, 128);
+        if (ImGui.InputTextWithHint("##settings-search", Lang.Get("vsdirector:settings-search"), ref categorySearch, 128)) resetFieldsScroll = true;
+    }
+
+    private static string CategoryLabel(SettingsPage target)
+    {
+        string code = target == SettingsPage.Experimental ? "experimental-features" : target.ToString().ToLowerInvariant();
+        return Lang.Get("vsdirector:settings-" + code);
+    }
+
+    private void SelectCategory(SettingsPage target)
+    {
+        page = target;
+        categorySearch = string.Empty;
+        resetFieldsScroll = true;
+    }
+
+    private void DrawCategoryNavigation()
+    {
+        var pages = Enum.GetValues<SettingsPage>().Where(IsPageAvailable).ToArray();
+        float scale = DirectorImGuiTheme.Scale;
+        if (ImGui.GetContentRegionAvail().X < 520 * scale)
+        {
+            ImGui.SetNextItemWidth(-1);
+            if (ImGui.BeginCombo("##settings-category", CategoryLabel(page)))
+            {
+                foreach (var target in pages)
+                    if (ImGui.Selectable(CategoryLabel(target), page == target)) SelectCategory(target);
+                ImGui.EndCombo();
+            }
+            return;
+        }
+        ImGui.BeginChild("settings-categories", new Vector2(170 * scale, 0), true);
+        foreach (var target in pages)
+            if (ImGui.Selectable(CategoryLabel(target), page == target)) SelectCategory(target);
+        ImGui.EndChild();
+        ImGui.SameLine();
     }
 
     private void DrawCategories()
     {
         bool searching = !string.IsNullOrWhiteSpace(categorySearch);
+        bool showingPermissions = false;
         int visible = 0;
         foreach (SettingsPage target in Enum.GetValues<SettingsPage>())
         {
-            if (!IsPageAvailable(target)) continue;
-            string code = target == SettingsPage.Experimental ? "experimental-features" : target.ToString().ToLowerInvariant();
-            string label = Lang.Get("vsdirector:settings-" + code);
+            if (!IsPageAvailable(target) || (!searching && target != page)) continue;
+            string label = CategoryLabel(target);
             bool categoryMatch = MatchesSearch(label);
             if (target == SettingsPage.Permissions)
             {
-                if (searching && !categoryMatch) { permissionsExpanded = false; continue; }
+                if (searching && !categoryMatch) continue;
                 visible++;
+                showingPermissions = true;
                 ImGui.PushID((int)target);
-                if (searching) ImGui.SetNextItemOpen(true, ImGuiCond.Always);
-                bool expanded = DirectorImGuiTheme.CollapsingHeader(label,
-                    target == page ? ImGuiTreeNodeFlags.DefaultOpen : ImGuiTreeNodeFlags.None);
-                if (expanded)
-                {
-                    if (!permissionsExpanded) owner.RequestPermissionMembers();
-                    DrawPermissions();
-                }
-                permissionsExpanded = expanded;
+                ImGui.SeparatorText(label);
+                if (!permissionsExpanded) owner.RequestPermissionMembers();
+                DrawPermissions();
                 ImGui.PopID();
                 continue;
             }
@@ -96,27 +133,25 @@ internal sealed partial class DirectorSettingsDialog
             if (searching && fields.Length == 0) continue;
             visible++;
             ImGui.PushID((int)target);
-            if (searching) ImGui.SetNextItemOpen(true, ImGuiCond.Always);
-            if (DirectorImGuiTheme.CollapsingHeader(label, target == page ? ImGuiTreeNodeFlags.DefaultOpen : ImGuiTreeNodeFlags.None))
+            ImGui.SeparatorText(label);
+            foreach (var group in fields.GroupBy(f => SettingGroup(f.Property)))
             {
-                foreach (var group in fields.GroupBy(f => SettingGroup(f.Property)))
-                {
-                    ImGui.SeparatorText(Lang.Get("vsdirector:settings-section-" + group.Key));
-                    foreach (SettingField field in group) DrawSetting(field.Property, Lang.Get("vsdirector:" + field.Label));
-                }
-                if (target is SettingsPage.Offscreen or SettingsPage.Recording)
-                {
-                    ImGui.BeginDisabled(ffmpegTestRunning);
-                    if (ImGui.Button(Lang.Get(ffmpegTestRunning ? "vsdirector:settings-ffmpeg-testing" : "vsdirector:settings-test-ffmpeg-short"))) TestFfmpeg();
-                    ImGui.EndDisabled();
-                    if (ImGui.Button(Lang.Get("vsdirector:settings-download-ffmpeg"))) OpenFfmpegDownload();
-                }
-                if (target == SettingsPage.Accessibility && draft.EnableModelOutlines && !searching) DrawOutlineEntities();
-                ImGui.Spacing();
+                ImGui.SeparatorText(Lang.Get("vsdirector:settings-section-" + group.Key));
+                foreach (SettingField field in group) DrawSetting(field.Property, Lang.Get("vsdirector:" + field.Label));
             }
+            if (target is SettingsPage.Offscreen or SettingsPage.Recording)
+            {
+                ImGui.BeginDisabled(ffmpegTestRunning);
+                if (ImGui.Button(Lang.Get(ffmpegTestRunning ? "vsdirector:settings-ffmpeg-testing" : "vsdirector:settings-test-ffmpeg-short"))) TestFfmpeg();
+                ImGui.EndDisabled();
+                if (ImGui.Button(Lang.Get("vsdirector:settings-download-ffmpeg"))) OpenFfmpegDownload();
+            }
+            if (target == SettingsPage.Accessibility && draft.EnableModelOutlines && !searching) DrawOutlineEntities();
+            ImGui.Spacing();
             ImGui.PopID();
         }
-        if (visible == 0) ImGui.TextDisabled(Lang.Get("vsdirector:scene-empty"));
+        permissionsExpanded = showingPermissions;
+        if (visible == 0) ImGui.TextDisabled(Lang.Get("vsdirector:settings-search-empty"));
     }
 
     private bool MatchesSearch(string text) => string.IsNullOrWhiteSpace(categorySearch)
@@ -172,7 +207,10 @@ internal sealed partial class DirectorSettingsDialog
         else if (type == typeof(bool))
         {
             bool enabled = (bool)value!;
-            if (ImGui.Checkbox(label, ref enabled)) Set(enabled);
+            bool changed = ImGui.Checkbox("##value", ref enabled);
+            ImGui.SameLine(); ImGui.TextWrapped(label);
+            if (ImGui.IsItemClicked()) { enabled = !enabled; changed = true; }
+            if (changed) Set(enabled);
         }
         else if (type.IsEnum)
         {

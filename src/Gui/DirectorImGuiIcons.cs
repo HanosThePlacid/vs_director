@@ -116,6 +116,7 @@ internal static class DirectorImGuiIcons
         ["undo"] = "\ueb77",
         ["upload"] = "\ueb47",
         ["video"] = "\ued22",
+        ["viewfinder"] = "\ueb4e",
         ["volume"] = "\ueb51",
         ["walk"] = "\uec87",
         ["wind"] = "\uec34",

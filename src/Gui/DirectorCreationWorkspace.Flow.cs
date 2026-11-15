@@ -1,4 +1,4 @@
-﻿using static VSDirector.Gui.DirectorCreationText;
+using static VSDirector.Gui.DirectorCreationText;
 using ImGuiNET;
 using System.Numerics;
 using VSDirector.Data;
@@ -12,9 +12,16 @@ internal sealed partial class DirectorCreationWorkspace
     private bool pendingPrompt;
     internal Action? LeaveRequested;
     internal void Enter()
-    { Active = true; host.SetCreationMode(true); Runtime.NewProjectDefaults=editorPreferences.Defaults;Runtime.Guides=editorPreferences.Guides; Runtime.Enabled = Project is not null; }
+    {
+        if(!Active)
+        {
+            if(browser)ShowCreationPanel("browser");
+            if(properties)ShowCreationPanel("properties");
+            if(timeline)ShowCreationPanel("timeline");
+        }
+        Active = true; host.SetCreationMode(true); Runtime.NewProjectDefaults=editorPreferences.Defaults;Runtime.Guides=editorPreferences.Guides; Runtime.Enabled = Project is not null; }
     internal void Exit()
-    { PersistEditorPreferences(); particlePreviews.Clear(); ClearActorPickerPreviews(); Runtime.ClosePlayerInventory(); Runtime.Suspend(); Active = false; host.CreationPreviewVisible = false; host.SetCreationMode(false); }
+    { PersistEditorPreferences(); ClearParticlePreviews(); ClearActorPickerPreviews(); Runtime.ClosePlayerInventory(); Runtime.Suspend(); Active = false; host.CreationPreviewVisible = false; host.SetCreationMode(false); }
     internal void RequestLeave()
     {
         if (pendingTransition is not null) return;
@@ -124,8 +131,12 @@ internal sealed partial class DirectorCreationWorkspace
                 new("export", L("creation-export-menu"), () => auxiliary = "output", Project is not null && Runtime.ProjectWorldMatches)
             };
             ImGui.BeginDisabled(Runtime.PerformanceActive);
-            DirectorWorkspaceMenus.Toolbar(commands).Draw();
+            float progressWidth=ShowParticleToolbarProgress?Math.Min(120*DirectorImGuiTheme.Scale,ImGui.GetContentRegionAvail().X*.25f):0;
+            var toolbar=DirectorWorkspaceMenus.Toolbar(commands);
+            toolbar.ToolbarRightReserve=progressWidth>0?progressWidth+ImGui.GetStyle().ItemSpacing.X:0;
+            toolbar.Draw();
             ImGui.EndDisabled();
+            DrawParticleToolbarProgress(progressWidth);
         }
         finally { ImGui.EndChild(); }
     }
@@ -136,7 +147,7 @@ internal sealed partial class DirectorCreationWorkspace
     }
     private void DrawAuxiliary()
     {
-        if (auxiliary != "particles") particlePreviews.Clear();
+        if (auxiliary != "particles") ClearParticlePreviews();
         if (auxiliary != "actors") ClearActorPickerPreviews();
         if (auxiliary.Length == 0) return;
         if (!Runtime.ProjectWorldMatches && auxiliary != "projects") auxiliary = "projects";

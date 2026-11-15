@@ -94,10 +94,22 @@ internal static class DirectorImGuiTheme
 
     internal static bool CollapsingHeader(string title, ImGuiTreeNodeFlags flags = ImGuiTreeNodeFlags.None)
     {
-        ImGui.PushStyleVar(ImGuiStyleVar.FramePadding, new Vector2(8, 7) * Scale);
-        ImGui.PushStyleColor(ImGuiCol.Header, Panel);
-        try { return ImGui.CollapsingHeader(title, flags); }
-        finally { ImGui.PopStyleColor(); ImGui.PopStyleVar(); }
+        // Share creation's native header colors, padding and arrow across workspaces.
+        int hidden = title.IndexOf("##", StringComparison.Ordinal);
+        string label = hidden < 0 ? title : title[..hidden];
+        float width = Math.Max(1, ImGui.GetContentRegionAvail().X - ImGui.GetFrameHeight() - ImGui.GetStyle().FramePadding.X * 2);
+        string display = label;
+        if (ImGui.CalcTextSize(display).X > width)
+        {
+            int length = display.Length;
+            while (length > 0 && ImGui.CalcTextSize(display[..length] + "…").X > width) length--;
+            display = display[..length] + "…";
+        }
+        int stable = title.IndexOf("###", StringComparison.Ordinal);
+        string id = stable < 0 ? "###" + title : title[stable..];
+        bool open = ImGui.CollapsingHeader(display + id, flags);
+        if (display != label && ImGui.IsItemHovered()) ImGui.SetTooltip(label);
+        return open;
     }
 
     internal static Scope Toolbar()

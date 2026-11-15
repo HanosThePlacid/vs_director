@@ -301,7 +301,7 @@ public sealed partial class DirectorCreationProject
                 || !double.IsFinite(obj.Opacity) || !double.IsFinite(obj.Fov) || !double.IsFinite(obj.OrbitRadius) || !double.IsFinite(obj.OrbitSpeed) || !double.IsFinite(obj.Shake)
                 || !double.IsFinite(obj.ParticleLife) || !double.IsFinite(obj.ParticleStart) || !double.IsFinite(obj.ParticleDuration) || !obj.ImageSize.Finite())
                 throw new InvalidDataException("Non-finite object transform.");
-            obj.ParticleSettings?.Validate();
+            obj.ParticleSettings?.Validate();obj.ParticleEffect?.Validate();
             ValidateParent(obj.Id, objectParents);
         }
         foreach (var model in Models)

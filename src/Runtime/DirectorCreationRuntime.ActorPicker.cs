@@ -8,6 +8,17 @@ namespace VSDirector.Runtime;
 
 internal sealed partial class DirectorCreationRuntime
 {
+    internal List<VSDirector.Data.CreationVector> ParticleMesh(string code)
+    {
+        MeshData mesh;
+        var location=new AssetLocation(code);
+        if(api.World.GetBlock(location) is {} block)api.Tesselator.TesselateBlock(block,out mesh);
+        else if(api.World.GetItem(location) is {} item)api.Tesselator.TesselateItem(item,out mesh);
+        else mesh=ActorPickerMesh(code,0);
+        if(mesh.IndicesCount==0)throw new InvalidOperationException("Source mesh is empty.");
+        if(mesh.IndicesCount>49152)throw new InvalidOperationException("Particle source mesh exceeds 16384 triangles.");
+        return mesh.Indices.Take(mesh.IndicesCount).Select(i=>new VSDirector.Data.CreationVector(mesh.xyz[i*3],mesh.xyz[i*3+1],mesh.xyz[i*3+2])).ToList();
+    }
     // Read geometry and textures without spawning an entity or adding anything to the work.
     internal MeshData ActorPickerMesh(string code, long entityId)
     {

@@ -8,17 +8,45 @@ public sealed class CreationParticleEffect
     public int Version { get; set; } = 2;
     public string Name { get; set; } = "Effect";
     public int Seed { get; set; } = 1;
+    public double GameSpeed {get;set;}=1;
+    public double Density {get;set;}=1;
     public List<CreationParticleEmitter> Emitters { get; set; } = [new()];
     public Dictionary<string, byte[]> Textures { get; set; } = new();
     public void Validate()
     {
-        if (Version != 2 || Name is null || Emitters is null || Emitters.Count > 256 || Textures is null
+        if (!double.IsFinite(GameSpeed)||GameSpeed is <.05 or >200||!double.IsFinite(Density)||Density is <0 or >100||Version is not (2 or 3) || Name is null || Emitters is null || Emitters.Count > 256 || Textures is null
             || Textures.Any(t => t.Value is null || t.Value.Length > 64 * 1024 * 1024))
             throw new InvalidDataException("Invalid particle effect.");
         var ids = new HashSet<Guid>();
-        foreach (var emitter in Emitters) { emitter.Validate(); if (!ids.Add(emitter.Id)) throw new InvalidDataException("Duplicate emitter ID."); }
+        void Check(CreationParticleEmitter emitter,int depth)
+        {
+            if(emitter is null || depth>8 || !ids.Add(emitter.Id) || ids.Count>2048)throw new InvalidDataException("Invalid particle hierarchy (depth, duplicate ID or node budget).");
+            emitter.Validate();
+            if(Version==3 && emitter.Modules is null)throw new InvalidDataException("Version 3 requires particle modules.");
+            if(Version==2 && (emitter.Modules is not null || emitter.Children.Count>0))throw new InvalidDataException("Upgrade this effect before adding modules.");
+            if(depth>0&&emitter.Modules?.Geometry is ParticleGeometry.Trail or ParticleGeometry.Beam or ParticleGeometry.Lightning)
+                throw new InvalidDataException("Geometry emitters must be root nodes. Use their collision children for impact particles.");
+            foreach(var child in emitter.Children)Check(child,depth+1);
+        }
+        foreach (var emitter in Emitters) Check(emitter,0);
+    }
+    public IEnumerable<CreationParticleEmitter> AllNodes() => Emitters.SelectMany(e=>e.Descendants());
+    public CreationParticleEffect Duplicate()
+    {
+        var copy=CreationJson.Clone(this);var ids=copy.AllNodes().ToDictionary(n=>n.Id,_=>Guid.NewGuid());
+        foreach(var node in copy.AllNodes()){node.Id=ids[node.Id];if(node.Modules is {} m&&ids.TryGetValue(m.TrailEmitter,out var source))m.TrailEmitter=source;}
+        return copy;
+    }
+    public static CreationParticleEffect Create() => new() { Version=3,Emitters=[new(){Modules=new()}] };
+    public void Upgrade()
+    {
+        if(Version==3)return;
+        foreach(var emitter in Emitters)emitter.Upgrade();
+        Version=3;
     }
 }
+
+public enum CreationParticleRecipe { None, ReferenceFire }
 
 public sealed class CreationParticleEmitter
 {
@@ -42,15 +70,51 @@ public sealed class CreationParticleEmitter
     public JsonObject? Original { get; set; }
     // Explicit conversions retain the old evaluator, including its noise and timing.
     public CreationSceneObject? Legacy { get; set; }
+    public List<CreationParticleEmitter> Children { get; set; } = [];
+    public ParticleTrigger Trigger { get; set; }
+    public CreationParticleModules? Modules { get; set; }
+    public string Preparation { get; set; } = "";
+    public CreationParticleRecipe Recipe {get;set;}
+    public int ProviderIndex {get;set;}
+    public int ProviderCount {get;set;}
+    public IEnumerable<CreationParticleEmitter> Descendants() => new[]{this}.Concat(Children.SelectMany(c=>c.Descendants()));
+    public void Upgrade()
+    {
+        Original ??= (JsonObject)Properties.DeepClone();
+        foreach(var (name,trigger) in new[]{("SecondaryParticles",ParticleTrigger.Periodic),("DeathParticles",ParticleTrigger.Death)})
+        {
+            if(CreationParticleFields.Find(Properties,name) is JsonArray array)
+                foreach(var node in array.OfType<JsonObject>())
+                {
+                    var child=new CreationParticleEmitter {Name=name+" "+(Children.Count+1),Trigger=trigger,Properties=(JsonObject)node.DeepClone(),
+                        Source=Source,Family=Family,Variant=Variant,Texture=Texture,SoftEdge=SoftEdge,Additive=Additive};
+                    child.Upgrade();child.Modules!.InheritVelocity=ParentVelocityWeight;Children.Add(child);
+                }
+            CreationParticleFields.Set(Properties,name,new JsonArray());
+        }
+        Modules ??= new();
+        if(Recipe==CreationParticleRecipe.ReferenceFire){Modules.Shape=ParticleSpawnShape.Box;Modules.Extent=CreationVector.One;}
+    }
+    public JsonObject NativeProperties()
+    {
+        var result=(JsonObject)Properties.DeepClone();
+        foreach(var (name,trigger) in new[]{("SecondaryParticles",ParticleTrigger.Periodic),("DeathParticles",ParticleTrigger.Death)})
+            if(Children.Any(c=>c.Trigger==trigger))CreationParticleFields.Set(result,name,new JsonArray(Children.Where(c=>c.Enabled&&c.Trigger==trigger).Select(c=>(JsonNode)c.NativeProperties()).ToArray()));
+        return result;
+    }
+    public CreationParticleEmitter Duplicate()
+    {var copy=CreationJson.Clone(this);var ids=copy.Descendants().ToDictionary(n=>n.Id,_=>Guid.NewGuid());foreach(var n in copy.Descendants()){n.Id=ids[n.Id];if(n.Modules is {} m&&ids.TryGetValue(m.TrailEmitter,out var source))m.TrailEmitter=source;}return copy;}
     public void Validate()
     {
-        if (Id == Guid.Empty || Name is null || Source is null || Family is null || Variant is null || Texture is null
+        if (!Enum.IsDefined(Recipe)||ProviderCount is <0 or >256||ProviderIndex<0||(Recipe!=CreationParticleRecipe.None&&(ProviderCount==0||ProviderIndex>=ProviderCount))||Id == Guid.Empty || Name is null || Preparation is null || Source is null || Family is null || Variant is null || Texture is null
             || !Offset.Finite() || !double.IsFinite(Start) || Start is < 0 or > 86400
             || !double.IsFinite(Duration) || Duration is < 0 or > 86400
             || !double.IsFinite(Interval) || Interval is < .001 or > 86400
             || !double.IsFinite(ParentVelocityWeight) || Math.Abs(ParentVelocityWeight) > 1000)
             throw new InvalidDataException("Invalid particle emitter.");
         CreationParticleFields.Validate(Properties);
+        if(Children is null || Children.Count>256 || !Enum.IsDefined(Trigger))throw new InvalidDataException("Invalid child nodes.");
+        Modules?.Validate();
         if (Legacy is { } legacy) { if (legacy.ParticleEffect is not null) throw new InvalidDataException("Recursive legacy effect."); legacy.ParticleSettings?.Validate(); }
     }
 }
@@ -183,9 +247,11 @@ public static class CreationParticleFields
         }
         effect.Validate(); return effect;
     }
-    public static string ExportNative(CreationParticleEffect effect)
+    public static string ExportNative(CreationParticleEffect effect,bool compatibleOnly=false)
     {
         effect.Validate();
+        var issues=ParticleCompatibility.Issues(effect);
+        if(effect.Version>=3 && !compatibleOnly && issues.Count>0)throw new InvalidOperationException("Native export would omit: "+string.Join("; ",issues));
         if(effect.Emitters.Any(e=>e.Legacy is not null))throw new InvalidOperationException("Converted legacy effects use the Director evaluator. Save a Director preset to preserve their appearance and timing.");
         JsonObject Native(JsonObject properties)
         {
@@ -199,7 +265,7 @@ public static class CreationParticleFields
             }
             return result;
         }
-        var a=new JsonArray(effect.Emitters.Where(e=>e.Enabled).Select(e=>(JsonNode)Native(e.Properties)).ToArray());
+        var a=new JsonArray(effect.Emitters.Where(e=>e.Enabled && (!compatibleOnly || e.Modules?.Geometry is null or ParticleGeometry.Particle)).Select(e=>(JsonNode)Native(e.NativeProperties())).ToArray());
         return (a.Count==1?a[0]!:a).ToJsonString(CreationJson.Options);
     }
 }

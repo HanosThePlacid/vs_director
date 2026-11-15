@@ -20,17 +20,8 @@ internal sealed partial class DirectorCreationWorkspace
     }
     private static bool Header(string label)
     {
-        float width = Math.Max(1, ImGui.GetContentRegionAvail().X - ImGui.GetFrameHeight() - ImGui.GetStyle().FramePadding.X * 2);
-        string display = label;
-        if (ImGui.CalcTextSize(display).X > width)
-        {
-            int length = display.Length;
-            while (length > 0 && ImGui.CalcTextSize(display[..length] + "…").X > width) length--;
-            display = display[..length] + "…";
-        }
         ImGui.PushID(label);
-        bool open = ImGui.CollapsingHeader(display + "###header", ImGuiTreeNodeFlags.DefaultOpen);
-        if (display != label && ImGui.IsItemHovered()) ImGui.SetTooltip(label);
+        bool open = DirectorImGuiTheme.CollapsingHeader(label + "###header", ImGuiTreeNodeFlags.DefaultOpen);
         ImGui.PopID();
         return open;
     }

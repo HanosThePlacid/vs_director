@@ -7,9 +7,27 @@ namespace VSDirector.Rendering;
 
 internal sealed partial class DirectorCreationRenderer
 {
+    private MeshRef? dynamicParticles;
+    private int particleVertexCapacity,particleIndexCapacity;
+    private void DrawParticleMesh(MeshData data)
+    {
+        if(dynamicParticles is null||data.VerticesCount>particleVertexCapacity||data.IndicesCount>particleIndexCapacity)
+        {
+            dynamicParticles?.Dispose();particleVertexCapacity=(int)BitOperations.RoundUpToPowerOf2((uint)Math.Max(64,data.VerticesCount));
+            particleIndexCapacity=(int)BitOperations.RoundUpToPowerOf2((uint)Math.Max(96,data.IndicesCount));
+            var lights=new CustomMeshDataPartFloat{Values=new float[particleVertexCapacity*3],Count=particleVertexCapacity*3,InterleaveSizes=[3],InterleaveStride=12,InterleaveOffsets=[0],StaticDraw=false};
+            dynamicParticles=api.Render.AllocateEmptyMesh(particleVertexCapacity*12,0,particleVertexCapacity*8,particleVertexCapacity*4,0,particleIndexCapacity*4,lights,null!,null!,null!,staticDraw:false);
+        }
+        api.Render.UpdateMesh(dynamicParticles,data);game.Platform.RenderMesh(dynamicParticles);
+    }
     private void RenderAdvancedParticles(IReadOnlyDictionary<Guid,CreationObjectState> states)
     {
-        var particles=AdvancedParticles.Where(p=>states.TryGetValue(p.ObjectId,out var state)&&state.Visible).ToArray();
+        var particles=AdvancedParticles.Where(p=>states.TryGetValue(p.ObjectId,out var state)&&state.Visible).Select(p=>
+        {
+            var state=states[p.ObjectId];
+            return p.LegacyProgress>=0 && state.Source.ParticleEffect?.AllNodes().FirstOrDefault(e=>e.Id==p.EmitterId)?.Legacy is {} legacy
+                ?p with {Color=state.Color*(1-p.LegacyProgress)+(legacy.ParticleSettings??CreationParticleSettings.Preset(legacy.ResourceCode)).EndColor*p.LegacyProgress}:p;
+        }).ToArray();
         if(particles.Length==0)return;
         var view=game.PerspectiveViewMat;
         Matrix4x4.Invert(new((float)view[0],(float)view[1],(float)view[2],0,(float)view[4],(float)view[5],(float)view[6],0,
@@ -21,67 +39,48 @@ internal sealed partial class DirectorCreationRenderer
         // Preserve global depth order across effects and materials. Only adjacent
         // particles with the same material share a draw call.
         particles=particles.OrderBy(p=>view[2]*p.Position.X+view[6]*p.Position.Y+view[10]*p.Position.Z).ToArray();
-        static (string Texture,bool Additive,bool Cube,bool Soft,double Glow) Material(CreationSimulatedParticle p)=>(p.Texture,p.Additive,p.Cube,p.Soft,p.Glow);
         var lights=new Dictionary<(int,int,int),Vector3>();
+        Vector3 Light(CreationSimulatedParticle p)
+        {
+            var world=p.Position+session.Project!.Origin;var cell=((int)Math.Floor(world.X),(int)Math.Floor(world.Y),(int)Math.Floor(world.Z));
+            if(lights.TryGetValue(cell,out var value))return value;
+            var native=api.World.BlockAccessor.GetLightRGBs(new BlockPos(cell.Item1,cell.Item2+session.Project.Dimension*BlockPos.DimensionBoundary,cell.Item3));var ambient=api.Render.AmbientColor;
+            return lights[cell]=new(Math.Max(native.X,native.W*ambient.X),Math.Max(native.Y,native.W*ambient.Y),Math.Max(native.Z,native.W*ambient.Z));
+        }
         try
         {
-        for(int start=0;start<particles.Length;)
-        {
-            var material=Material(particles[start]);int end=start+1;
-            while(end<particles.Length&&Material(particles[end])==material)end++;
-            BindTexture(session.Project!,material.Texture);
-            api.Render.GlToggleBlend(true,material.Additive?EnumBlendMode.Glow:EnumBlendMode.Standard);
-            shader.Uniform("particleMask",material.Soft&&!material.Cube?1:0);
-            shader.Uniform("surfaceShading",material.Cube?1:0);
-            shader.Uniform("glow",(float)material.Glow);
-            int vertices=(end-start)*(material.Cube?24:4);
-            var data=new MeshData(vertices,(end-start)*(material.Cube?36:6),withFlags:false);
-            data.CustomFloats=new CustomMeshDataPartFloat{Values=new float[vertices*3],InterleaveSizes=[3],InterleaveStride=12,InterleaveOffsets=[0],Count=vertices*3};
-            for(int index=start;index<end;index++)
+            foreach(var batch in DirectorParticleMesh.Build(particles,facing,Light,p=>states[p.ObjectId].Source.Opacity))
             {
-                var p=particles[index];var state=states[p.ObjectId];
-                var scale=p.ShapeScale==default?Vector3.One:p.ShapeScale.Float();
-                var rotation=p.ShapeRotation==default?Matrix4x4.Identity:Matrix4x4.CreateFromQuaternion(p.ShapeRotation);
-                var matrix=Matrix4x4.CreateScale(scale*(float)p.Size)*Matrix4x4.CreateRotationZ((float)(p.Rotation*Math.PI/180))
-                    *(p.Cube?rotation:facing)*Matrix4x4.CreateTranslation(p.Position.Float());
-                byte Byte(double n)=>(byte)Math.Clamp((int)Math.Round(n*255),0,255);
-                var rgb=p.Color;
-                if(p.LegacyProgress>=0 && state.Source.ParticleEffect?.Emitters.FirstOrDefault(e=>e.Id==p.EmitterId)?.Legacy is {} legacy)
-                    rgb=state.Color*(1-p.LegacyProgress)+(legacy.ParticleSettings??CreationParticleSettings.Preset(legacy.ResourceCode)).EndColor*p.LegacyProgress;
-                byte[] color=[Byte(rgb.X),Byte(rgb.Y),Byte(rgb.Z),Byte(p.Alpha*state.Source.Opacity)];
-                var world=p.Position+session.Project!.Origin;
-                var cell=((int)Math.Floor(world.X),(int)Math.Floor(world.Y),(int)Math.Floor(world.Z));
-                if(!lights.TryGetValue(cell,out var light))
-                {
-                    var native=api.World.BlockAccessor.GetLightRGBs(new BlockPos(cell.Item1,cell.Item2+session.Project.Dimension*BlockPos.DimensionBoundary,cell.Item3));
-                    var ambient=api.Render.AmbientColor;
-                    lights[cell]=light=new(Math.Max(native.X,native.W*ambient.X),Math.Max(native.Y,native.W*ambient.Y),Math.Max(native.Z,native.W*ambient.Z));
-                }
-                void Face(Vector3[] vertices)
-                {
-                    int first=data.VerticesCount;
-                    for(int i=0;i<4;i++)
-                    {
-                        var v=Vector3.Transform(vertices[i],matrix);int offset=data.VerticesCount*3;
-                        data.CustomFloats.Values[offset]=light.X;data.CustomFloats.Values[offset+1]=light.Y;data.CustomFloats.Values[offset+2]=light.Z;
-                        data.AddVertex(v.X,v.Y,v.Z,i is 1 or 2?1:0,i>=2?1:0,color);
-                    }
-                    foreach(int i in new[]{0,1,2,0,2,3})data.AddIndex(first+i);
-                }
-                if(!p.Cube)Face([new(-.5f,-.5f,0),new(.5f,-.5f,0),new(.5f,.5f,0),new(-.5f,.5f,0)]);
-                else
-                {
-                    Vector3[] points=Enumerable.Range(0,8).Select(i=>new Vector3((i&1)==0?-.5f:.5f,(i&2)==0?-.5f:.5f,(i&4)==0?-.5f:.5f)).ToArray();
-                    foreach(int[] face in new int[][]{[0,1,3,2],[4,6,7,5],[0,4,5,1],[2,3,7,6],[0,2,6,4],[1,5,7,3]})Face(face.Select(i=>points[i]).ToArray());
-                }
+                var m=batch.Material;BindTexture(session.Project!,m.Texture);api.Render.GlToggleBlend(true,m.Additive?EnumBlendMode.Glow:EnumBlendMode.Standard);
+                shader.Uniform("particleMask",m.Soft&&!m.Cube?1:0);shader.Uniform("surfaceShading",m.Cube?1:0);shader.Uniform("glow",(float)m.Glow);
+                shader.Uniform("particleUv",m.Uv.X,m.Uv.Y,m.Uv.Z,m.Uv.W);
+                DrawParticleMesh(batch.Mesh);
             }
-            using var mesh=api.Render.UploadMesh(data);game.Platform.RenderMesh(mesh);
-            start=end;
         }
-        }
-        finally
+        finally{api.Render.GlToggleBlend(true,EnumBlendMode.Standard);shader.Uniform("vertexColorMode",0);shader.Uniform("particleMask",0);}
+    }
+    internal static Matrix4x4 ParticleFacingMatrix(CreationSimulatedParticle p,Matrix4x4 camera)
+    {
+        if(p.Facing==ParticleFacing.Camera)return camera;
+        if(p.Facing==ParticleFacing.CameraY){var flat=new Vector3(camera.M31,0,camera.M33);var forward=flat.LengthSquared()<1e-10?Vector3.UnitZ:Vector3.Normalize(flat);return Matrix4x4.CreateWorld(Vector3.Zero,forward,Vector3.UnitY);}
+        if(p.Facing==ParticleFacing.Velocity&&p.Velocity.Float().LengthSquared()>1e-8)
+        {var forward=Vector3.Normalize(p.Velocity.Float());return Matrix4x4.CreateWorld(Vector3.Zero,forward,Math.Abs(forward.Y)>.99?Vector3.UnitX:Vector3.UnitY);}
+        return p.Facing switch{ParticleFacing.X=>Matrix4x4.CreateRotationY(MathF.PI/2),ParticleFacing.Y=>Matrix4x4.CreateRotationX(MathF.PI/2),_=>Matrix4x4.Identity};
+    }
+    private void RenderParticleRibbons(IReadOnlyDictionary<Guid,CreationObjectState> states)
+    {
+        if(ParticleRibbons.Count==0)return;
+        shader!.Uniform("vertexColorMode",1);shader.Uniform("tint",1f,1f,1f,1f);shader.Uniform("particleMask",0);shader.Uniform("surfaceShading",0);
+        shader.UniformMatrix("modelMatrix",Array(Matrix4x4.Identity));game.Platform.GlDepthMask(false);
+        var view=game.PerspectiveViewMat;var direction=new Vector3((float)view[2],(float)view[6],(float)view[10]);
+        foreach(var ribbon in ParticleRibbons)
         {
-            api.Render.GlToggleBlend(true,EnumBlendMode.Standard);shader.Uniform("vertexColorMode",0);shader.Uniform("particleMask",0);
+            if(!states.TryGetValue(ribbon.ObjectId,out var state)||!state.Visible)continue;
+            BindTexture(session.Project!,ribbon.Texture);api.Render.GlToggleBlend(true,ribbon.Additive?EnumBlendMode.Glow:EnumBlendMode.Standard);shader.Uniform("glow",(float)ribbon.Glow);
+            Vector3 Light(CreationVector point){var world=point+session.Project!.Origin;var v=api.World.BlockAccessor.GetLightRGBs(new BlockPos((int)world.X,(int)world.Y,(int)world.Z,session.Project.Dimension));var ambient=api.Render.AmbientColor;return new(Math.Max(v.X,v.W*ambient.X),Math.Max(v.Y,v.W*ambient.Y),Math.Max(v.Z,v.W*ambient.Z));}
+            var mesh=DirectorParticleMesh.Ribbon(ribbon,direction,Light,state.Source.Opacity);
+            DrawParticleMesh(mesh);
         }
+        api.Render.GlToggleBlend(true,EnumBlendMode.Standard);shader.Uniform("vertexColorMode",0);
     }
 }

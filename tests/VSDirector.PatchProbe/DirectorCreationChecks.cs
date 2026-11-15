@@ -599,6 +599,23 @@ internal static partial class DirectorImGuiProbe
             ImGui.NewFrame(); Call(host, "Draw", 1f / 60); ImGui.Begin("###vsdirector-creation-view");
             if (ImGui.GetWindowDockID() != propertiesDock) throw new Exception("Reopening View changed its dock");
             ImGui.End(); ImGui.Render();
+            // A checked window can be behind another dock tab. Opening its menu item
+            // must activate the window, not merely set the already-true flag again.
+            foreach(string panel in new[]{"view","properties"})
+            {
+                Call(workspace,"ShowCreationPanel",panel);Frame();Frame();
+                ImGui.NewFrame();Call(host,"Draw",1f/60);
+                bool showing=ImGui.Begin("###vsdirector-creation-"+panel);
+                if(!showing||ImGui.GetWindowDockID()!=propertiesDock)throw new Exception("Checked panel was not brought to front: "+panel);
+                ImGui.End();ImGui.Render();
+            }
+            Call(workspace,"ShowCreationPanel","view");Frame();Frame();
+            AccessTools.Field(workspace.GetType(),"<Active>k__BackingField").SetValue(workspace,false);
+            Call(workspace,"Enter");Frame();Frame();
+            ImGui.NewFrame();Call(host,"Draw",1f/60);
+            bool restoredProperties=ImGui.Begin("###vsdirector-creation-properties");ImGui.End();ImGui.Render();
+            if(!restoredProperties)throw new Exception("Re-entering creation did not reveal the enabled Properties window");
+            Console.WriteLine("PASS checked window commands select native dock tabs; re-entering reveals enabled Properties without reopening closed panels");
             Console.WriteLine("PASS creation View shares the inspector dock and closes/reopens without changing replay layout");
             uint toolsDock=(uint)AccessTools.Property(host.GetType(),"CreationToolsDockId").GetValue(host)!;
             if(toolsDock==0||toolsDock==propertiesDock)throw new Exception("Tools must have an independent dock above Properties");
@@ -617,6 +634,11 @@ internal static partial class DirectorImGuiProbe
             Call(host,"DockWindow","###vsdirector-creation-tools",leftDock);
             Call(host,"Finish",(uint)AccessTools.Field(host.GetType(),"creationDock").GetValue(host)!);Frame();Frame();
             if((uint)AccessTools.Property(host.GetType(),"CreationToolsDockId").GetValue(host)! !=leftDock)throw new Exception("Moved Tools window was forced back to its default dock");
+            Call(workspace,"ShowCreationPanel","browser");Frame();Frame();
+            ImGui.NewFrame();Call(host,"Draw",1f/60);
+            bool objectListVisible=ImGui.Begin("###vsdirector-creation-browser");
+            if(!objectListVisible||ImGui.GetWindowDockID()!=leftDock)throw new Exception("Object list command failed to reveal its tab in the saved dock");
+            ImGui.End();ImGui.Render();
             Call(host,"ResetLayout");Frame();Frame();
             propertiesDock=(uint)AccessTools.Property(host.GetType(),"InspectorDockId").GetValue(host)!;
             if((uint)AccessTools.Property(host.GetType(),"CreationToolsDockId").GetValue(host)! ==propertiesDock)throw new Exception("Reset did not restore the Tools split");
@@ -819,6 +841,46 @@ internal static partial class DirectorImGuiProbe
                     ImGui.SetWindowFontScale(1);ImGui.End();ImGui.Render();
                 }
             }
+            Current().Upgrade();
+            var active=Current().Emitters[0];active.Modules!.Gradient.Enabled=true;
+            active.Modules.Drivers["Size"]=new(){Mode=ParticleValueMode.Curve,Clock=ParticleClock.Life};
+            foreach(string language in new[]{"zh-cn","en"})
+            foreach(float scale in new[]{1f,1.5f,2f})
+            foreach(float width in new[]{220f,520f})
+            foreach(string page in new[]{"common","emission","motion","appearance","environment","children","shape","schedule","forces","material","geometry","drivers"})
+            {
+                LoadCreationProbeLanguage(language);
+                bool module=page is "shape" or "schedule" or "forces" or "material" or "geometry" or "drivers";
+                AccessTools.Field(type,"particlePage").SetValue(workspace,module?"modules":page);
+                AccessTools.Field(type,"particleModulePage").SetValue(workspace,page);
+                for(int frame=0;frame<3;frame++)
+                {
+                    ImGui.NewFrame();ImGui.SetNextWindowPos(Vector2.Zero);ImGui.SetNextWindowSize(new(width*scale,650));
+                    ImGui.Begin("particle-v3-pages",ImGuiWindowFlags.NoSavedSettings|ImGuiWindowFlags.NoResize);ImGui.SetWindowFontScale(scale);
+                    AccessTools.Method(type,"DrawAdvancedParticleEditor").Invoke(workspace,[session.Project!.Objects[0]]);
+                    if(frame==2&&ImGui.GetScrollMaxX()>1)throw new Exception($"Particle v3 page {page} overflow: {language}, {width}, {scale}: {ImGui.GetScrollMaxX()}");
+                    ImGui.SetWindowFontScale(1);ImGui.End();ImGui.Render();
+                }
+            }
+            AccessTools.Field(type,"particlePage").SetValue(workspace,"common");
+            foreach(string language in new[]{"zh-cn","en"})
+            foreach(float scale in new[]{1f,1.5f,2f})
+            foreach(float width in new[]{220f,520f})
+            {
+                LoadCreationProbeLanguage(language);
+                for(int frame=0;frame<3;frame++)
+                {
+                    ImGui.NewFrame();ImGui.SetNextWindowPos(Vector2.Zero);ImGui.SetNextWindowSize(new(width*scale,650));
+                    ImGui.Begin("particle-tools-probe",ImGuiWindowFlags.NoSavedSettings|ImGuiWindowFlags.NoResize);ImGui.SetWindowFontScale(scale);
+                    AccessTools.Method(type,"DrawTools").Invoke(workspace,[]);
+                    if(frame==2&&ImGui.GetScrollMaxX()>1)throw new Exception("Particle icon tools overflowed");
+                    ImGui.SetWindowFontScale(1);ImGui.End();ImGui.Render();
+                }
+            }
+            var icons=type.Assembly.GetType("VSDirector.Gui.DirectorImGuiIcons")!;
+            if((string)AccessTools.Method(icons,"Get").Invoke(null,["viewfinder"])! != "\ueb4e")throw new Exception("Particle viewfinder is not the Tabler glyph");
+            Console.WriteLine("PASS particle refresh/viewfinder tools fit bilingual narrow panels at 100/150/200%");
+            Console.WriteLine("PASS v3 parameter/module pages, gradients and drivers in Chinese/English at 220/520px and 100/150/200%");
             Console.WriteLine("PASS advanced particle scope edits/undo/redo and all native/nested parameter controls in Chinese/English at narrow widths and 100/150/200%");
         }
         finally{scope.SetValue(workspace,0);session.Open(original);}
