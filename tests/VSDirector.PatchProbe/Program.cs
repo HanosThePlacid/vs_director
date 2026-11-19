@@ -20,6 +20,9 @@ using VSDirector.Networking;
 using ProtoBuf;
 
 const string harmonyId = "vscn.vsdirector.patch-probe";
+DirectorBinaryCompatibilityChecks.Run(typeof(VSDirectorModSystem).Assembly);
+DirectorGameCompatibilityChecks.Run();
+DirectorClientCompatibilityChecks.Run();
 DirectorOptionalServerChecks.Run();
 DirectorAdvancedParticleChecks.Run();
 DirectorBlueprintChecks.Run();
@@ -96,7 +99,7 @@ MethodBase[] targets =
 {
     AccessTools.Method(typeof(EntityPlayer), "updateEyeHeight"),
     AccessTools.Method(typeof(EntityPlayer), "canStandUp"),
-    AccessTools.Method(typeof(ModelDataPoolLocation), nameof(ModelDataPoolLocation.IsVisible)),
+    AccessTools.Method(typeof(MeshDataPool), nameof(MeshDataPool.FrustumCull)),
     AccessTools.PropertyGetter(typeof(EntityPlayer), nameof(EntityPlayer.AnimManager)),
     AccessTools.Method(typeof(ClientSystemEntities), "OnGameTick", new[] { typeof(float) }),
     AccessTools.Method(typeof(AnimationManager), nameof(AnimationManager.OnClientFrame), new[] { typeof(float) }),
@@ -578,8 +581,7 @@ try
     AssertWorkspaceViewportPatch(
         AccessTools.Method(
             typeof(PickingRayUtil),
-            nameof(PickingRayUtil.GetPickingRayByMouseCoordinates),
-            new[] { typeof(ClientMain) })
+            nameof(PickingRayUtil.GetPickingRayByMouseCoordinates))
             ?? throw new MissingMethodException(
                 typeof(PickingRayUtil).FullName,
                 nameof(PickingRayUtil.GetPickingRayByMouseCoordinates)),
@@ -4135,10 +4137,7 @@ try
     {
         CalculateMatrices = false
     };
-    AnimationManager scheduledAnimationManager = new()
-    {
-        Animator = primaryAnimatorProbe
-    };
+    AnimationManager scheduledAnimationManager = DirectorGameCompatibilityChecks.Animation(primaryAnimatorProbe);
     scheduledAnimationManager.ActiveAnimationsByAnimCode["offscreenprobe"] =
         detachedProbeActive["offscreenprobe"].Clone();
     ConstructorInfo offscreenEntityStateConstructor = offscreenEntityState
@@ -4383,10 +4382,7 @@ try
     {
         CalculateMatrices = false
     };
-    AnimationManager replayRegistrationManager = new()
-    {
-        Animator = replayRegistrationAnimator
-    };
+    AnimationManager replayRegistrationManager = DirectorGameCompatibilityChecks.Animation(replayRegistrationAnimator);
     replayRegistrationManager.ActiveAnimationsByAnimCode["offscreenprobe"] =
         detachedProbeActive["offscreenprobe"].Clone();
     DirectorReplayAnimationSample replayRegistrationSample = new()
@@ -5461,7 +5457,7 @@ try
         AccessTools.Method(
             typeof(BlockEntityOpenableContainer),
             nameof(BlockEntityOpenableContainer.OnReceivedServerPacket),
-            new[] { typeof(int), typeof(byte[]) }),
+            new[] { typeof(int), typeof(BlockEntity).Assembly.GetType("Vintagestory.API.Datastructures.SerializedData") ?? typeof(byte[]) }),
         AccessTools.Method(
             typeof(AnimationUtil),
             nameof(AnimationUtil.StartAnimation),
@@ -5490,7 +5486,8 @@ try
             !blockEntityStateTargets.Contains(target)))
     {
         throw new InvalidOperationException(
-            "Block-entity dirty, synchronization, packet, or animation coverage is incomplete.");
+            "Block-entity dirty, synchronization, packet, or animation coverage is incomplete: "
+            + string.Join(", ", requiredBlockEntityStateTargets.Where(t => !blockEntityStateTargets.Contains(t)).Select(t => t?.ToString() ?? "missing method")));
     }
     MethodInfo captureDoorSet = blockEntityStateCapturePatch.GetMethod(
         "CaptureDoorSet",
@@ -5587,7 +5584,7 @@ try
         BindingFlags.Static | BindingFlags.NonPublic)
         ?? throw new InvalidOperationException("Workspace button state helper was not found.");
     ConstructorInfo composerConstructor = typeof(GuiComposer).GetConstructor(
-        BindingFlags.Instance | BindingFlags.NonPublic,
+        BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
         binder: null,
         new[] { typeof(ICoreClientAPI), typeof(ElementBounds), typeof(string) },
         modifiers: null)
@@ -6079,7 +6076,7 @@ try
     {
         throw new InvalidOperationException("Replay animation keys do not preserve the shape animation identity.");
     }
-    AnimationManager aliasedAnimationManager = new();
+    AnimationManager aliasedAnimationManager = DirectorGameCompatibilityChecks.Animation();
     aliasedAnimationManager.ActiveAnimationsByAnimCode["death"] = new AnimationMetaData
     {
         Code = "die",
@@ -6102,7 +6099,7 @@ try
         throw new InvalidOperationException("Replay animation aliases would restart an already-active animation.");
     }
     Console.WriteLine("PASS replay animation metadata-code aliases stay active");
-    AnimationManager sharedShapeAnimationManager = new();
+    AnimationManager sharedShapeAnimationManager = DirectorGameCompatibilityChecks.Animation();
     sharedShapeAnimationManager.ActiveAnimationsByAnimCode["creativefly"] = new AnimationMetaData
     {
         Code = "creativefly",
@@ -7620,12 +7617,7 @@ try
     {
         throw new InvalidOperationException("Container lid animation was absent from replay data.");
     }
-    TreeAttribute openContainerTree = new();
-    using (MemoryStream animationTreeStream = new(openContainerData, writable: false))
-    using (BinaryReader animationTreeReader = new(animationTreeStream))
-    {
-        openContainerTree.FromBytes(animationTreeReader);
-    }
+    TreeAttribute openContainerTree = DirectorGameCompatibilityChecks.ReadTree(openContainerData);
     ITreeAttribute serializedAnimations = openContainerTree.GetTreeAttribute(
         "vsdirectorReplayAnimations")
         ?? throw new InvalidOperationException("Replay animation tree was absent from container data.");
@@ -7633,12 +7625,8 @@ try
         ?? throw new InvalidOperationException("Replay animation binding was absent from container data.");
     byte[] serializedLid = serializedBinding.GetBytes("0")
         ?? throw new InvalidOperationException("Replay lid metadata was absent from its animation binding.");
-    using (MemoryStream lidStream = new(serializedLid, writable: false))
-    using (BinaryReader lidReader = new(lidStream))
     {
-        AnimationMetaData lidMetadata = AnimationMetaData.FromBytes(
-            lidReader,
-            Vintagestory.API.Config.GameVersion.ShortGameVersion);
+        AnimationMetaData lidMetadata = DirectorGameCompatibilityChecks.ReadAnimation(serializedLid);
         if (!string.Equals(lidMetadata.Code, "lidopen", StringComparison.Ordinal))
         {
             throw new InvalidOperationException("Replay lid metadata code did not round trip.");

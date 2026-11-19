@@ -1,3 +1,4 @@
+using VSDirector.Compatibility;
 using static VSDirector.Gui.DirectorCreationText;
 using Vintagestory.API.Common;
 using Vintagestory.API.Common.Entities;
@@ -98,7 +99,7 @@ internal sealed partial class DirectorCreationRuntime
                     byte[] bytes = right ? sample.RightHandItem : sample.LeftHandItem; overrides = true;
                     if (bytes.Length > 0 && !performanceItems.TryGetValue(bytes, out stack))
                     {
-                        try { using var reader = new BinaryReader(new MemoryStream(bytes, false)); stack = new ItemStack(reader, api.World); }
+                        try { stack = DirectorGameCompatibility.Item(bytes, api.World); }
                         catch (Exception e) { api.Logger.Debug("VS Director: unavailable recorded hand item: {0}", e.Message); }
                         if (performanceItems.Count > 4096) performanceItems.Clear();
                         performanceItems[bytes] = stack;
@@ -108,7 +109,7 @@ internal sealed partial class DirectorCreationRuntime
                 {
                     if (!performanceItems.TryGetValue(authored, out stack))
                     {
-                        try { using var reader = new BinaryReader(new MemoryStream(authored, false)); stack = new ItemStack(reader, api.World); }
+                        try { stack = DirectorGameCompatibility.Item(authored, api.World); }
                         catch (Exception e) { api.Logger.Debug("VS Director: unavailable actor hand item: {0}", e.Message); }
                         if (performanceItems.Count > 4096) performanceItems.Clear();
                         performanceItems[authored] = stack;

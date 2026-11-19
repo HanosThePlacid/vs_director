@@ -1,3 +1,4 @@
+using VSDirector.Compatibility;
 using Vintagestory.API.Client;
 using Vintagestory.API.Common;
 using Vintagestory.API.Config;
@@ -87,8 +88,9 @@ internal static class DirectorReplayWorldCapture
                         FluidRuns = DirectorReplayChunkCodec.Encode(fluid)
                     });
 
-                    foreach ((BlockPos position, BlockEntity blockEntity) in chunk.BlockEntities)
+                    foreach (BlockEntity blockEntity in DirectorGameCompatibility.BlockEntities(chunk))
                     {
+                        BlockPos position = blockEntity.Pos;
                         BlockPos normalized = position.Copy();
                         if (normalized.dimension != dimension)
                         {

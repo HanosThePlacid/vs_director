@@ -1,3 +1,4 @@
+using VSDirector.Compatibility;
 using System;
 using System.Reflection;
 using HarmonyLib;
@@ -263,7 +264,7 @@ internal sealed class DirectorCameraController : IDisposable
             Yaw = (float)(capi.World.Player.CameraYaw * DegreesPerRadian),
             Pitch = (float)(capi.World.Player.CameraPitch * DegreesPerRadian),
             Roll = (float)(capi.World.Player.CameraRoll * DegreesPerRadian),
-            Fov = (float)(game.MainCamera.Fov * DegreesPerRadian),
+            Fov = (float)(DirectorClientCompatibility.GetFov(game.MainCamera) * DegreesPerRadian),
             CreatedUtc = DateTimeOffset.UtcNow,
             ModifiedUtc = DateTimeOffset.UtcNow
         };
@@ -1105,9 +1106,9 @@ internal sealed class DirectorCameraController : IDisposable
         player.CameraRoll = DegreesToRadians(target.Roll);
         float targetFov = DegreesToRadians(Math.Clamp(target.Fov, 1f, 170f));
         float targetZNear = Math.Clamp(0.1f - Math.Clamp(target.Fov, 1f, 170f) / 90f / 25f, 0.025f, 0.1f);
-        if (Math.Abs(camera.Fov - targetFov) > 0.00001f || Math.Abs(camera.ZNear - targetZNear) > 0.00001f)
+        if (Math.Abs(DirectorClientCompatibility.GetFov(camera) - targetFov) > 0.00001f || Math.Abs(camera.ZNear - targetZNear) > 0.00001f)
         {
-            camera.Fov = targetFov;
+            DirectorClientCompatibility.SetFov(camera, targetFov);
             camera.ZNear = targetZNear;
             game.Reset3DProjection();
         }
@@ -2083,7 +2084,7 @@ internal sealed class DirectorCameraController : IDisposable
                 AllowCameraControl = allowCameraControlOverride ?? game.AllowCameraControl,
                 AllowCharacterControl = allowCharacterControlOverride ?? game.AllowCharacterControl,
                 ShouldRender2DOverlays = game.ShouldRender2DOverlays,
-                Fov = game.MainCamera.Fov,
+                Fov = DirectorClientCompatibility.GetFov(game.MainCamera),
                 ZNear = game.MainCamera.ZNear,
                 Yaw = player.CameraYaw,
                 Pitch = player.CameraPitch,
@@ -2107,7 +2108,7 @@ internal sealed class DirectorCameraController : IDisposable
             game.MainCamera.TppCameraDistanceMax = TppMax;
             game.MainCamera.Tppcameradistance = TppDistance;
             SetTargetCameraDistance(game.MainCamera, TargetTppDistance);
-            game.MainCamera.Fov = Fov;
+            DirectorClientCompatibility.SetFov(game.MainCamera, Fov);
             game.MainCamera.ZNear = ZNear;
             game.AllowCameraControl = AllowCameraControl;
             game.AllowCharacterControl = AllowCharacterControl;

@@ -1,3 +1,4 @@
+using VSDirector.Compatibility;
 using Vintagestory.API.Client;
 using Vintagestory.API.Common;
 using Vintagestory.API.Common.Entities;
@@ -66,7 +67,7 @@ internal sealed partial class DirectorCreationRuntime
     {
         var item=Session.Project?.Objects.FirstOrDefault(o=>o.ParentId==actor.Id&&o.ActorHand==hand);
         if(item?.ItemStackData is {Length:>0} data)
-        {using var reader=new BinaryReader(new MemoryStream(data,false));return new ItemStack(reader,api.World);}
+        {return DirectorGameCompatibility.Item(data,api.World);}
         if(item is null||item.ResourceCode.Length==0)return null;
         var code=new AssetLocation(item.ResourceCode);
         var collectible=(CollectibleObject?)api.World.GetItem(code)??api.World.GetBlock(code);
@@ -77,7 +78,7 @@ internal sealed partial class DirectorCreationRuntime
         var item = Session.Project?.Objects.FirstOrDefault(o => o.ParentId == actor.Id && o.ActorHand == hand);
         if (item?.ItemStackData is { Length: > 0 } data)
         {
-            try { using var reader = new BinaryReader(new MemoryStream(data, false)); return new ItemStack(reader, api.World).GetName(); }
+            try { return DirectorGameCompatibility.Item(data, api.World).GetName(); }
             catch { /* Fall back to the resource code for unavailable old assets. */ }
         }
         var collectible = item is null || item.ResourceCode.Length == 0 ? null

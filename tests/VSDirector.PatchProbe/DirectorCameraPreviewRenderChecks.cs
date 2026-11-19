@@ -95,27 +95,36 @@ internal static partial class DirectorImGuiProbe
         var culler = new FrustumCulling { lod0BiasSq = 4096, shadowRangeX = 128, shadowRangeZ = 128 };
         culler.UpdateViewDistance(128);
         double[] projection = Mat4d.Create(); Mat4d.Perspective(projection, Math.PI / 2, 16d / 9, .1, 128);
+        var poolRender = ProbeDispatchProxy.Create<IRenderAPI>((m, _) => ProbeDispatchProxy.DefaultValue(m.ReturnType));
+        var poolApi = ProbeDispatchProxy.Create<ICoreClientAPI>((m, _) => m.Name == "get_Render" ? poolRender : ProbeDispatchProxy.DefaultValue(m.ReturnType));
         foreach (float yaw in new[] { 0f, 90, 180, 270 })
         {
             var pose = new DirectorOffscreenCameraPose(0, 100, 0, 0, yaw, 0, 0, 90);
             var (view, _, forward) = ((double[], double[], Vec3f))matrices.Invoke(null, [pose])!;
-            var location = new ModelDataPoolLocation { FrustumCullSphere = new Sphere(forward.X * 20, 100, forward.Z * 20, 1, 1, 1), LodLevel = 1, FrustumVisible = true };
+            var pool = MeshDataPool.AllocateNewPool(poolApi, 64, 64, 8);
+            var location = pool.TryAdd(poolApi, new MeshData { Indices = [0, 1, 2], IndicesCount = 3 }, new Vec3i(), 0,
+                new Sphere(forward.X * 20, 100, forward.Z * 20, 1, 1, 1))!;
+            location.LodLevel = 1;
             location.CullVisible[0] = location.CullVisible[1] = false;
             culler.CalcFrustumEquations(new(0, 100, 0, 0), projection, view);
-            if (location.IsVisible(EnumFrustumCullMode.CullNormal, culler)) throw new Exception("Primary terrain ignored its native cull cache.");
+            bool Visible(EnumFrustumCullMode mode) { pool.FrustumCull(culler, mode); return pool.indicesGroupsCount != 0; }
+            if (Visible(EnumFrustumCullMode.CullNormal)) throw new Exception("Primary terrain ignored its native cull cache.");
+            location.FrustumVisible = true;
             using ((IDisposable)enter.Invoke(null, [new DirectorOffscreenViewRequest { Pose = pose }, 1L])!)
             {
                 culler.CalcFrustumEquations(new(999, 100, 999, 0), projection, view);
-                if (!location.IsVisible(EnumFrustumCullMode.CullNormal, culler)
-                    || !location.IsVisible(EnumFrustumCullMode.CullInstant, culler)
-                    || !location.IsVisible(EnumFrustumCullMode.CullInstantShadowPassNear, culler)
-                    || !location.IsVisible(EnumFrustumCullMode.CullInstantShadowPassFar, culler))
+                if (!Visible(EnumFrustumCullMode.CullNormal)
+                    || !Visible(EnumFrustumCullMode.CullInstant)
+                    || !Visible(EnumFrustumCullMode.CullInstantShadowPassNear)
+                    || !Visible(EnumFrustumCullMode.CullInstantShadowPassFar))
                     throw new Exception("Preview terrain still depends on the editor's visibility or range origin.");
+                if (pool.indicesStartsByte[0] != 0 || pool.indicesSizes[0] != 3 || pool.RenderedTriangles != 1)
+                    throw new Exception("Preview draw group offsets or counts are incorrect.");
                 location.Hide = true;
-                if (location.IsVisible(EnumFrustumCullMode.CullNormal, culler)) throw new Exception("Preview showed hidden terrain.");
+                if (Visible(EnumFrustumCullMode.CullNormal)) throw new Exception("Preview showed hidden terrain.");
                 location.Hide = false;
                 location.FrustumCullSphere = new Sphere(-forward.X * 20, 100, -forward.Z * 20, 1, 1, 1);
-                if (location.IsVisible(EnumFrustumCullMode.CullNormal, culler)) throw new Exception("Preview rendered terrain behind its camera.");
+                if (Visible(EnumFrustumCullMode.CullNormal)) throw new Exception("Preview rendered terrain behind its camera.");
             }
             if (location.CullVisible[0] || location.CullVisible[1] || !location.FrustumVisible)
                 throw new Exception("Preview changed the primary terrain visibility buffers.");

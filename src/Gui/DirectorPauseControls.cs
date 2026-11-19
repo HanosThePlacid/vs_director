@@ -1,3 +1,4 @@
+using VSDirector.Compatibility;
 using Cairo;
 using Vintagestory.API.Client;
 using Vintagestory.API.Config;
@@ -180,7 +181,7 @@ internal sealed class DirectorPauseControls(GuiComposer composer, VSDirectorModS
             select.SetSelectedIndex(Math.Max(0, Array.IndexOf(sourceValues, value)));
     }
 
-    internal void ClearCameraName() => (composer.GetElement(CameraNameKey) as GuiElementTextInput)?.SetValue("");
+    internal void ClearCameraName() => (composer.GetElement(CameraNameKey) as GuiElementTextInput)?.SetDirectorValue("");
 
     internal void CloseInputs()
     {

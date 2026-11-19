@@ -117,8 +117,10 @@ internal static partial class DirectorImGuiProbe
                 {"get_Player"=>player,"get_Items"=>catalog.Select(s=>(Item)s.Collectible).ToList(),"get_Blocks"=>new List<Block>(),"get_Api"=>nativeApi,"get_Side"=>EnumAppSide.Client,_=>ProbeDispatchProxy.DefaultValue(m.ReturnType)});
                 var classes=new CharacterSystem {characterClasses=[new(){Code="commoner",Traits=[],Gear=[]},new(){Code="hunter",Traits=[],Gear=[]}],TraitsByCode=new()};
                 var loader=ProbeDispatchProxy.Create<IModLoader>((m,_)=>m.Name=="GetModSystem"?classes:ProbeDispatchProxy.DefaultValue(m.ReturnType));
+                var boolSettings=ProbeDispatchProxy.Create<ISettingsClass<bool>>((m,_)=>ProbeDispatchProxy.DefaultValue(m.ReturnType));
+                var settings=ProbeDispatchProxy.Create<ISettings>((m,_)=>m.Name=="get_Bool"?boolSettings:ProbeDispatchProxy.DefaultValue(m.ReturnType));
                 api=ProbeDispatchProxy.Create<ICoreClientAPI>((m,_)=>m.Name switch
-                {"get_Network"=>network,"get_World"=>world,"get_Gui"=>gui,"get_Render"=>render,"get_Input"=>input,"get_Event"=>events,"get_Logger"=>logger,"get_ClassRegistry"=>registry,"get_Assets"=>assets,"get_ModLoader"=>loader,
+                {"get_Settings"=>settings,"get_Network"=>network,"get_World"=>world,"get_Gui"=>gui,"get_Render"=>render,"get_Input"=>input,"get_Event"=>events,"get_Logger"=>logger,"get_ClassRegistry"=>registry,"get_Assets"=>assets,"get_ModLoader"=>loader,
                     _=>ProbeDispatchProxy.DefaultValue(m.ReturnType)});
                 nativeComposers=new GuiComposerManager(api);
                 var playerWindow=nativeComposers.Create("playercharacter",ElementBounds.Fixed(0,0,100,100).WithEmptyParent());

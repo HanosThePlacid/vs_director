@@ -1,5 +1,7 @@
 # VS Director
 
+Game compatibility: the same package supports Vintage Story 1.22.3 and 1.23.0-pre.1, with VSImGui 1.2.7. The 1.23 adaptation covers replay serialization and block entities, camera FOV, offscreen terrain visibility, native text inputs, and workspace picking. Automated checks run the same DLL against both versions; actual multiplayer sessions and the complete in-game recording/export workflow still need manual verification. Later 1.23 builds require revalidation.
+
 VS Director can be installed on the client without installing it on the server. The client still requires VSImGui 1.2.7. Personal cameras, paths, following loaded entities, the creation workspace, replay recording/playback and video export can operate locally. Recordings capture only chunks, entities and events received by the client; moving a camera does not load distant server terrain in this mode.
 
 Installing VS Director on the server enables server-managed permissions, remote camera chunks/replay preloading, remote tracking and sound relay, and actor performance recording that temporarily moves the player or changes their collision dimensions. Server installation retains the declared VSImGui dependency. When the server provides the Director channel, its permission rules apply; a pending or delayed permission reply does not enable unrestricted local access. The package remains universal so the optional server components can run; `requiredOnServer: false` allows the client to remain enabled on servers without it. Servers that install the mod still require connecting clients to install it.
@@ -31,3 +33,11 @@ Visual physics uses a fixed 120 Hz simulation, terrain collision, separation, dr
 Native VSBP/JSON exports contain static integer-position blocks only and reject individual display rotation/scale rather than silently dropping it. Director structure presets preserve source assets, cell overrides, clips, tracks, particle schemes and textures; the picker can browse/import them. External particle binding targets must belong to the exported hierarchy, and performance clips must be baked first. Existing version-1 projections require an explicit upgrade; opening does not migrate them.
 
 Blueprint limitations: Embedded entities and surface decorations are retained but not displayed; missing or unsupported meshes are reported and block export. Native liquid geometry uses a static preview material, without the world's refraction/wave shader. Actual game/mod-specific visual fidelity still needs in-game verification.
+
+Build release packages against the 1.22.3 SDK to retain a single binary for both game versions. `modinfo.json` therefore keeps `game: 1.22.3` as the minimum dependency. Run the repeatable compatibility checks with:
+
+```powershell
+./tools/TestGameCompatibility.ps1 -BaselineGamePath 'path/to/1.22.3' -NewGamePath 'path/to/1.23.0-pre.1' -VSImGuiPath 'path/to/vsimgui_1.2.7'
+```
+
+This builds once, checks native member references, and runs the full PatchProbe with each game's assemblies and assets in separate directories. Logs are written to `artifacts/compat*-probe.log`; no mod deployment is performed.

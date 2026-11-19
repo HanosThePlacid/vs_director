@@ -1,3 +1,4 @@
+using VSDirector.Compatibility;
 using System.IO;
 using System.Collections;
 using System.Diagnostics;
@@ -6681,8 +6682,9 @@ internal sealed partial class DirectorReplayManager : IDisposable
                 chunkSnapshot.ChunkZ,
                 active.WorldSnapshot.Dimension));
 
-            foreach ((BlockPos rawPosition, BlockEntity blockEntity) in chunk.BlockEntities)
+            foreach (BlockEntity blockEntity in DirectorGameCompatibility.BlockEntities(chunk))
             {
+                BlockPos rawPosition = blockEntity.Pos;
                 BlockPos position = new(rawPosition.X, rawPosition.Y, rawPosition.Z, active.WorldSnapshot.Dimension);
                 BlockKey key = BlockKey.From(position);
                 capture.Seen.Add(key);
@@ -9253,9 +9255,7 @@ internal sealed partial class DirectorReplayManager : IDisposable
                 return;
             }
 
-            using MemoryStream stream = new(particle.ProviderData, writable: false);
-            using BinaryReader reader = new(stream);
-            provider.FromBytes(reader, capi.World);
+            DirectorGameCompatibility.ParticleState(provider, particle.ProviderData, capi.World);
             SpawnReplayParticles(
                 provider,
                 provider is BlockBreakingParticleProps || provider.IgnoreUserConfig,
@@ -9500,9 +9500,7 @@ internal sealed partial class DirectorReplayManager : IDisposable
         }
 
         long entityId = entity.EntityId;
-        using MemoryStream stream = new(data, writable: false);
-        using BinaryReader reader = new(stream);
-        entity.FromBytes(reader, true);
+        DirectorGameCompatibility.EntityState(entity, data, true);
         entity.EntityId = entityId;
     }
 
@@ -10472,9 +10470,7 @@ internal sealed partial class DirectorReplayManager : IDisposable
 
         try
         {
-            using MemoryStream stream = new(data, writable: false);
-            using BinaryReader reader = new(stream);
-            return new ItemStack(reader, capi.World);
+            return DirectorGameCompatibility.Item(data, capi.World);
         }
         catch (Exception exception)
         {

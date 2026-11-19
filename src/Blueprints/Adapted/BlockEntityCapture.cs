@@ -1,6 +1,7 @@
 // Adapted from Buildwright 9b15446; covered by the project MIT LICENSE.
 // Mesh/capture portions: Copyright (c) 2026 Jeffrey Lueken (Venah), Fieldwright (MIT).
 // See LICENSE and licenses/Fieldwright-MIT.txt.
+using VSDirector.Compatibility;
 using System.Reflection;
 using System.IO;
 using VSDirector.Blueprints;
@@ -16,6 +17,9 @@ namespace VSDirector.Blueprints;
 
 internal static class BlockEntityCapture
 {
+    private static readonly System.Func<AnimationKeyFrameElement, double?> RotationX = DirectorGameCompatibility.Getter<AnimationKeyFrameElement, double?>("RotationX");
+    private static readonly System.Func<AnimationKeyFrameElement, double?> RotationY = DirectorGameCompatibility.Getter<AnimationKeyFrameElement, double?>("RotationY");
+    private static readonly System.Func<AnimationKeyFrameElement, double?> RotationZ = DirectorGameCompatibility.Getter<AnimationKeyFrameElement, double?>("RotationZ");
     private static readonly Vec3f BlockCenter = new(0.5f, 0.5f, 0.5f);
     private static readonly FieldInfo? MicroBlockRotationField = typeof(BlockEntityMicroBlock)
         .GetField("rotationY", BindingFlags.Instance | BindingFlags.NonPublic);
@@ -87,11 +91,7 @@ internal static class BlockEntityCapture
         try
         {
             var data = Ascii85.Decode(ascii85);
-            var tree = new TreeAttribute();
-            using var stream = new MemoryStream(data);
-            using var reader = new BinaryReader(stream);
-            tree.FromBytes(reader);
-            return tree;
+            return DirectorGameCompatibility.Tree(data);
         }
         catch { return null; }
     }
@@ -323,9 +323,9 @@ internal static class BlockEntityCapture
         {
             var element = shape.GetElementByName(name);
             if (element == null) continue;
-            element.RotationX += pose.RotationX ?? 0;
-            element.RotationY += pose.RotationY ?? 0;
-            element.RotationZ += pose.RotationZ ?? 0;
+            element.RotationX += RotationX(pose) ?? 0;
+            element.RotationY += RotationY(pose) ?? 0;
+            element.RotationZ += RotationZ(pose) ?? 0;
         }
         return shape;
     }
