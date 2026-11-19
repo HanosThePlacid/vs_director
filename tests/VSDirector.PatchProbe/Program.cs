@@ -20,6 +20,7 @@ using VSDirector.Networking;
 using ProtoBuf;
 
 const string harmonyId = "vscn.vsdirector.patch-probe";
+DirectorOptionalServerChecks.Run();
 DirectorAdvancedParticleChecks.Run();
 DirectorBlueprintChecks.Run();
 DirectorPerformanceChecks.Run();
@@ -8235,46 +8236,6 @@ try
             TotalColumns = 7,
             SentColumns = 5
         },
-        new DirectorSharedCameraDto
-        {
-            Id = Guid.NewGuid().ToString("D"),
-            Name = "Shared probe",
-            X = 10d,
-            Y = 20d,
-            Z = 30d,
-            Fov = 70f,
-            Dimension = 2
-        },
-        new DirectorSharedCameraRequest
-        {
-            Action = (int)DirectorSharedCameraAction.Upsert,
-            Camera = new DirectorSharedCameraDto
-            {
-                Id = Guid.NewGuid().ToString("D"),
-                Name = "Nested request camera",
-                X = 1d,
-                Y = 2d,
-                Z = 3d,
-                Fov = 60f,
-                Dimension = 1
-            }
-        },
-        new DirectorSharedCameraCatalog
-        {
-            Cameras = new List<DirectorSharedCameraDto>
-            {
-                new()
-                {
-                    Id = Guid.NewGuid().ToString("D"),
-                    Name = "Nested catalog camera",
-                    X = 4d,
-                    Y = 5d,
-                    Z = 6d,
-                    Fov = 80f,
-                    Dimension = 3
-                }
-            }
-        }
     };
     foreach (object message in networkMessages)
     {
@@ -8335,24 +8296,6 @@ try
         {
             throw new InvalidOperationException("Replay chunk preload corridor did not round trip.");
         }
-        if (message is DirectorSharedCameraRequest cameraRequest
-            && clone is DirectorSharedCameraRequest clonedCameraRequest
-            && (!string.Equals(cameraRequest.Camera.Id, clonedCameraRequest.Camera.Id, StringComparison.Ordinal)
-                || !string.Equals(cameraRequest.Camera.Name, clonedCameraRequest.Camera.Name, StringComparison.Ordinal)))
-        {
-            throw new InvalidOperationException("Shared-camera request payload did not round trip.");
-        }
-        if (message is DirectorSharedCameraCatalog catalog
-            && clone is DirectorSharedCameraCatalog clonedCatalog
-            && (clonedCatalog.Cameras.Count != catalog.Cameras.Count
-                || !string.Equals(
-                    catalog.Cameras[0].Name,
-                    clonedCatalog.Cameras[0].Name,
-                    StringComparison.Ordinal)))
-        {
-            throw new InvalidOperationException("Shared-camera catalog payload did not round trip.");
-        }
-
         Console.WriteLine($"PASS protobuf {message.GetType().Name}");
     }
 

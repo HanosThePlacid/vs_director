@@ -73,7 +73,7 @@ internal static class DirectorBlockSoundRelay
         IClientNetworkChannel? currentChannel = channel;
         BlockPos? block = activeBlock;
         if (captureDepth <= 0
-            || currentChannel is null
+            || currentChannel?.Connected != true
             || block is null
             || location is null
             || !double.IsFinite(x)

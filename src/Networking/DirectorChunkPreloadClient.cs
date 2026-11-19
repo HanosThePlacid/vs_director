@@ -28,7 +28,7 @@ internal sealed class DirectorChunkPreloadClient : IDisposable
 
     public void Update(Guid replayId, DirectorReplayPreloadPlan plan)
     {
-        if (replayId == Guid.Empty || plan.ExpandedColumns.Count == 0)
+        if (!channel.Connected || replayId == Guid.Empty || plan.ExpandedColumns.Count == 0)
         {
             Stop();
             return;
@@ -81,7 +81,8 @@ internal sealed class DirectorChunkPreloadClient : IDisposable
             return;
         }
 
-        channel.SendPacket(new DirectorChunkPreloadRequest { Active = false });
+        if (channel.Connected)
+            channel.SendPacket(new DirectorChunkPreloadRequest { Active = false });
         activeReplayId = string.Empty;
         activePlanHash = 0;
         lastSentMs = capi.ElapsedMilliseconds;

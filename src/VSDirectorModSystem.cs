@@ -80,8 +80,6 @@ public sealed partial class VSDirectorModSystem : ModSystem
     private DirectorPermissionServer? permissionServer;
     private DirectorPerformanceServer? performanceServer;
     private DirectorPermissionClient? permissionClient;
-    private DirectorSharedCameraClient? sharedCameraClient;
-    private DirectorSharedCameraServer? sharedCameraServer;
     private DirectorRecordingCoordinator? recording => null;
     private DirectorRecordingSessionStatus? latestRecordingServerStatus;
     private Guid? assignedRecordingTrackId;
@@ -191,6 +189,8 @@ public sealed partial class VSDirectorModSystem : ModSystem
         => library?.OrderedActorPerformances ?? Array.Empty<DirectorActorPerformance>();
 
     internal bool IsDirectorAdmin => permissionClient?.IsAdmin == true;
+
+    internal bool IsClientOnly => permissionClient?.IsClientOnly == true;
 
     internal IReadOnlyList<DirectorPermissionMemberDto> PermissionMembers
         => permissionClient?.Members ?? Array.Empty<DirectorPermissionMemberDto>();
@@ -706,9 +706,6 @@ public sealed partial class VSDirectorModSystem : ModSystem
 
     internal IReadOnlyList<CameraFollowRig> FollowRigs
         => library?.OrderedFollowRigs ?? Array.Empty<CameraFollowRig>();
-
-    internal IReadOnlyList<CameraPreset> SharedCameras
-        => sharedCameraClient?.Cameras ?? Array.Empty<CameraPreset>();
 
     internal IReadOnlyList<DirectorRecordingTrack> RecordingTracks
         => library?.OrderedRecordingTracks ?? Array.Empty<DirectorRecordingTrack>();
@@ -1407,8 +1404,6 @@ public sealed partial class VSDirectorModSystem : ModSystem
         anchorClient = new DirectorAnchorClient(api, OnAnchorStatus);
         DirectorBlockSoundRelay.Attach(api);
         chunkPreloadClient = new DirectorChunkPreloadClient(api);
-        sharedCameraClient = new DirectorSharedCameraClient(api, OnSharedCameraError);
-        sharedCameraClient.CatalogChanged += OnSharedCameraCatalogChanged;
         pathPreview = new DirectorPathPreviewRenderer(
             api,
             () => Cameras,
@@ -1466,7 +1461,6 @@ public sealed partial class VSDirectorModSystem : ModSystem
         permissionServer = new DirectorPermissionServer(api);
         performanceServer = new DirectorPerformanceServer(api, permissionServer);
         anchorServer = new DirectorAnchorServer(api, permissionServer);
-        sharedCameraServer = new DirectorSharedCameraServer(api, permissionServer);
     }
 
     public override void Dispose()
@@ -1516,11 +1510,6 @@ public sealed partial class VSDirectorModSystem : ModSystem
         anchorClient = null;
         chunkPreloadClient?.Dispose();
         chunkPreloadClient = null;
-        if (sharedCameraClient is not null)
-        {
-            sharedCameraClient.CatalogChanged -= OnSharedCameraCatalogChanged;
-        }
-        sharedCameraClient = null;
         ForceStopLiveOffscreenForShutdown();
         ForceStopOffscreenCaptureForShutdown();
         offscreenRenderer?.Dispose();
@@ -1537,7 +1526,6 @@ public sealed partial class VSDirectorModSystem : ModSystem
         replay = null;
         DirectorReplayRuntime.Manager = null;
         DirectorReplayRuntime.UpdateCameraForRenderFrame = null;
-        sharedCameraServer = null;
         anchorServer?.Dispose();
         anchorServer = null;
         performanceServer?.Dispose(); performanceServer = null;
@@ -2150,184 +2138,6 @@ public sealed partial class VSDirectorModSystem : ModSystem
     }
 
     internal CameraPreset? FindCamera(Guid id) => library?.Find(id);
-
-    internal CameraPreset? FindSharedCamera(string selector)
-    {
-        if (string.IsNullOrWhiteSpace(selector))
-        {
-            return null;
-        }
-
-        string trimmed = selector.Trim();
-        IReadOnlyList<CameraPreset> cameras = SharedCameras;
-        if (Guid.TryParse(trimmed, out Guid id))
-        {
-            return cameras.FirstOrDefault(camera => camera.Id == id)?.DeepClone();
-        }
-        if (int.TryParse(trimmed, NumberStyles.Integer, CultureInfo.InvariantCulture, out int index))
-        {
-            return index >= 1 && index <= cameras.Count ? cameras[index - 1].DeepClone() : null;
-        }
-        return cameras.FirstOrDefault(camera => string.Equals(
-            camera.Name,
-            trimmed,
-            StringComparison.OrdinalIgnoreCase))?.DeepClone();
-    }
-
-    internal string SharedCameraListText()
-    {
-        IReadOnlyList<CameraPreset> cameras = SharedCameras;
-        if (cameras.Count == 0)
-        {
-            return Lang.Get("vsdirector:shared-camera-list-empty");
-        }
-
-        List<string> lines = new() { Lang.Get("vsdirector:shared-camera-list-header", cameras.Count) };
-        for (int index = 0; index < cameras.Count; index++)
-        {
-            CameraPreset camera = cameras[index];
-            (double displayX, double displayY, double displayZ) = DisplayPosition(
-                camera.X,
-                camera.Y,
-                camera.Z);
-            lines.Add(Lang.Get(
-                "vsdirector:shared-camera-list-entry",
-                index + 1,
-                camera.Name,
-                camera.Dimension,
-                displayX.ToString("0.##", CultureInfo.InvariantCulture),
-                displayY.ToString("0.##", CultureInfo.InvariantCulture),
-                displayZ.ToString("0.##", CultureInfo.InvariantCulture)));
-        }
-        return string.Join("\n", lines);
-    }
-
-    internal void RequestSharedCameraList()
-    {
-        if (!HasPermission(DirectorPermission.SharedCameras))
-        {
-            ShowPermissionDenied();
-            return;
-        }
-        sharedCameraClient?.RequestList();
-    }
-
-    internal bool TryPublishSharedCamera(string selector, out string message)
-    {
-        if (!EnsurePermission(DirectorPermission.SharedCameras, out message))
-        {
-            Show(message);
-            return false;
-        }
-        CameraPreset? camera = FindCamera(selector);
-        if (camera is null)
-        {
-            message = Lang.Get("vsdirector:camera-not-found", selector);
-            Show(message);
-            return false;
-        }
-        if (sharedCameraClient is null)
-        {
-            message = Lang.Get("vsdirector:server-required");
-            return false;
-        }
-
-        sharedCameraClient.Publish(camera);
-        message = Lang.Get("vsdirector:shared-camera-publish-requested", camera.Name);
-        Show(message);
-        return true;
-    }
-
-    internal bool TryDeleteSharedCamera(string selector, out string message)
-    {
-        if (!EnsurePermission(DirectorPermission.SharedCameras, out message))
-        {
-            Show(message);
-            return false;
-        }
-        CameraPreset? camera = FindSharedCamera(selector);
-        if (camera is null)
-        {
-            message = Lang.Get("vsdirector:shared-camera-not-found", selector);
-            Show(message);
-            return false;
-        }
-        if (sharedCameraClient is null)
-        {
-            message = Lang.Get("vsdirector:server-required");
-            return false;
-        }
-
-        sharedCameraClient.Delete(camera.Id);
-        message = Lang.Get("vsdirector:shared-camera-delete-requested", camera.Name);
-        Show(message);
-        return true;
-    }
-
-    internal bool TryActivateSharedCamera(string selector, out string message)
-    {
-        if (!EnsurePermission(DirectorPermission.SharedCameras, out message))
-        {
-            Show(message);
-            return false;
-        }
-        CameraPreset? camera = FindSharedCamera(selector);
-        if (camera is null)
-        {
-            message = Lang.Get("vsdirector:shared-camera-not-found", selector);
-            Show(message);
-            return false;
-        }
-        if (!EnsureReady(out message) || !EnsureDirectorAccess(out message))
-        {
-            Show(message);
-            return false;
-        }
-        if (!controller!.TryActivate(camera, out string error))
-        {
-            message = Lang.Get("vsdirector:camera-error", error);
-            Show(message);
-            return false;
-        }
-
-        message = Lang.Get("vsdirector:shared-camera-active", camera.Name, ExitHotkeyLabel);
-        Show(message);
-        return true;
-    }
-
-    internal bool TryImportSharedCamera(string selector, out string message)
-    {
-        if (!EnsurePermission(DirectorPermission.SharedCameras, out message)
-            || !EnsurePermission(DirectorPermission.CameraLibrary, out message))
-        {
-            Show(message);
-            return false;
-        }
-        CameraPreset? camera = FindSharedCamera(selector);
-        if (camera is null)
-        {
-            message = Lang.Get("vsdirector:shared-camera-not-found", selector);
-            Show(message);
-            return false;
-        }
-        if (!EnsureEditAccess(out message))
-        {
-            return false;
-        }
-
-        CameraLibraryDocument before = library!.Document;
-        camera.Id = Guid.Empty;
-        camera.QuickSlot = null;
-        CameraPreset added = library.Add(camera);
-        if (!PersistOrRollback(before, out message))
-        {
-            return false;
-        }
-
-        message = Lang.Get("vsdirector:shared-camera-imported", added.Name);
-        Show(message);
-        return true;
-    }
 
     internal CameraPath? FindPath(Guid id) => library?.FindPath(id);
 
@@ -12706,11 +12516,6 @@ public sealed partial class VSDirectorModSystem : ModSystem
         }
 
         leavingWorld = false;
-        if (sharedCameraClient is not null)
-        {
-            sharedCameraClient.CatalogChanged -= OnSharedCameraCatalogChanged;
-            sharedCameraClient.CatalogChanged += OnSharedCameraCatalogChanged;
-        }
         if (replay is not null)
         {
             replay.PlaybackStateChanged -= OnReplayPlaybackStateChanged;
@@ -12738,10 +12543,9 @@ public sealed partial class VSDirectorModSystem : ModSystem
             accessAttempted = false;
             automaticReplayAuthorizationPending = false;
             permissionClient?.Reset();
-            permissionClient?.RequestSnapshot();
             anchorClient?.ResetSession();
             chunkPreloadClient?.ResetSession();
-            sharedCameraClient?.Reset();
+            permissionClient?.RequestSnapshot();
             pathPreview?.Refresh();
             // LevelFinalize overlaps other mods' GUI initialization. The
             // Cairo-backed workspace is created lazily from a user action so
@@ -12761,8 +12565,8 @@ public sealed partial class VSDirectorModSystem : ModSystem
         if (IsShuttingDown
             || !config.AutoRecordReplay
             || !HasPermission(DirectorPermission.ReplayCapture)
-            || !HasPermission(DirectorPermission.RemoteChunkAccess)
-            || anchorClient?.AccessAllowed != true
+            || (!IsClientOnly && (!HasPermission(DirectorPermission.RemoteChunkAccess)
+                || anchorClient?.AccessAllowed != true))
             || replay?.IsRecording == true
             || replay?.HasPendingSave == true
             || replay?.IsPlaying == true
@@ -12864,10 +12668,6 @@ public sealed partial class VSDirectorModSystem : ModSystem
         // UI services may already have shut down in an earlier LeaveWorld handler.
         leavingWorld = true;
         replayExportWorkspace = null;
-        if (sharedCameraClient is not null)
-        {
-            sharedCameraClient.CatalogChanged -= OnSharedCameraCatalogChanged;
-        }
         if (replay is not null)
         {
             replay.PlaybackStateChanged -= OnReplayPlaybackStateChanged;
@@ -12912,7 +12712,6 @@ public sealed partial class VSDirectorModSystem : ModSystem
         permissionClient?.Reset();
         anchorClient?.ResetSession();
         chunkPreloadClient?.ResetSession();
-        sharedCameraClient?.Reset();
         controller?.Deactivate();
         workspace?.Dispose();
         workspace = null;
@@ -12949,7 +12748,6 @@ public sealed partial class VSDirectorModSystem : ModSystem
         permissionClient?.Reset();
         anchorClient?.ResetSession();
         chunkPreloadClient?.ResetSession();
-        sharedCameraClient?.Reset();
         controller?.Deactivate();
         workspace?.Dispose();
         workspace = null;
@@ -13606,6 +13404,12 @@ public sealed partial class VSDirectorModSystem : ModSystem
             return;
         }
 
+        if (IsWorldReady && IsClientOnly)
+        {
+            QueueAutomaticReplayRestart();
+            return;
+        }
+
         if (!IsWorldReady
             || capi is null
             || anchorClient is null
@@ -14171,6 +13975,12 @@ public sealed partial class VSDirectorModSystem : ModSystem
 
     private bool EnsureDirectorAccess(out string message)
     {
+        if (IsClientOnly)
+        {
+            message = string.Empty;
+            return true;
+        }
+
         if (anchorClient is null)
         {
             message = Lang.Get("vsdirector:server-required");
@@ -14199,6 +14009,7 @@ public sealed partial class VSDirectorModSystem : ModSystem
     private void OnClientTick(float deltaTime)
     {
         if (IsShuttingDown) return;
+        if (IsWorldReady) permissionClient?.Tick();
         voiceBridge.Drain();
         MonitorLiveOffscreenRecording();
         MonitorOffscreenCapture();
@@ -15111,6 +14922,12 @@ public sealed partial class VSDirectorModSystem : ModSystem
             return true;
         }
 
+        if (IsClientOnly && (permission & (DirectorPermission.RemoteChunkAccess | DirectorPermission.ActorRecording)) != 0)
+        {
+            message = Lang.Get("vsdirector:server-required");
+            return false;
+        }
+
         if (permissionClient?.IsKnown != true)
         {
             permissionClient?.RequestSnapshot();
@@ -15231,17 +15048,8 @@ public sealed partial class VSDirectorModSystem : ModSystem
             {
                 automaticReplayAuthorizationPending = false;
                 anchorClient?.ResetSession();
+                if (IsClientOnly) QueueAutomaticReplayRestart();
             }
-
-            if (HasPermission(DirectorPermission.SharedCameras))
-            {
-                sharedCameraClient?.RequestList();
-            }
-            else
-            {
-                sharedCameraClient?.Reset();
-            }
-
         }
 
         if (!HasWorkspacePermission && workspace is not null)
@@ -15338,27 +15146,6 @@ public sealed partial class VSDirectorModSystem : ModSystem
             ? "vsdirector:invalid-anchor"
             : "vsdirector:permission-denied";
         Show(Lang.Get(key));
-    }
-
-    private void OnSharedCameraCatalogChanged()
-    {
-        if (library is not null)
-        {
-            RefreshWorkspaceDialogs();
-        }
-    }
-
-    private void OnSharedCameraError(string error)
-    {
-        string key = error switch
-        {
-            "permission" => "vsdirector:permission-denied",
-            "invalid-camera" => "vsdirector:shared-camera-invalid",
-            "camera-not-found" => "vsdirector:shared-camera-not-found-generic",
-            "camera-save-failed" => "vsdirector:camera-save-failed",
-            _ => "vsdirector:shared-camera-error"
-        };
-        Show(key == "vsdirector:shared-camera-error" ? Lang.Get(key, error) : Lang.Get(key));
     }
 
     private void OnPathCompleted(string pathName)

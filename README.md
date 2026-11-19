@@ -1,5 +1,9 @@
 # VS Director
 
+VS Director can be installed on the client without installing it on the server. The client still requires VSImGui 1.2.7. Personal cameras, paths, following loaded entities, the creation workspace, replay recording/playback and video export can operate locally. Recordings capture only chunks, entities and events received by the client; moving a camera does not load distant server terrain in this mode.
+
+Installing VS Director on the server enables server-managed permissions, remote camera chunks/replay preloading, remote tracking and sound relay, and actor performance recording that temporarily moves the player or changes their collision dimensions. Server installation retains the declared VSImGui dependency. When the server provides the Director channel, its permission rules apply; a pending or delayed permission reply does not enable unrestricted local access. The package remains universal so the optional server components can run; `requiredOnServer: false` allows the client to remain enabled on servers without it. Servers that install the mod still require connecting clients to install it.
+
 - Director workspace with saved camera positions, free cameras, and player or entity follow cameras.
 - Camera paths with keyframe editing, curves, trimming, easing, automatic Bezier interpolation, looping, reverse playback, and speed controls.
 - Client replay recording of entities, animations, held items, particles, positional audio, loaded chunks, and block changes.
@@ -7,7 +11,7 @@
 - Replay timeline editing with camera paths, scene elements, visual controls, and video export.
 - Live offscreen recording from fixed, path, or follow cameras through OBS or directly to FFmpeg MP4.
 - Dedicated OBS source plugin for offscreen video and spatial camera audio.
-- Shared camera positions, server permissions, and remote camera chunk loading.
+- Personal camera positions, server permissions, and remote camera chunk loading.
 - Voice integration API for spatial PCM audio capture, replay, and export.
 - English and Simplified Chinese interfaces.
 - Blueprint projections: Add → Projection imports Buildwright `.vsbp` or native block-schematic `.json` files from the local library, game/mod templates, or a chosen file. Imports copy the source into the project and do not place real world blocks.

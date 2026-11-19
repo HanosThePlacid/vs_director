@@ -207,7 +207,8 @@ internal sealed partial class DirectorCreationRuntime
         if (actor.RecordingChannels == 0) throw new InvalidOperationException(L("creation-record-select-channel"));
         var manager = DirectorReplayRuntime.Manager;
         var channel = api.Network.GetChannel(DirectorNetwork.ChannelName);
-        if (!channel.Connected || manager is null || manager.IsRecording || manager.IsLiveActionRecording) throw new InvalidOperationException(L("creation-recording-unavailable"));
+        if (!channel.Connected) throw new InvalidOperationException(L("server-required"));
+        if (manager is null || manager.IsRecording || manager.IsLiveActionRecording) throw new InvalidOperationException(L("creation-recording-unavailable"));
         owner.TryCaptureCreationView(out performanceView!); PreparePerformance();
         observingWorldActor = false; recordedBones.Clear(); lastBoneSample = -1;
         performanceActor = actor.Id; performanceStart = Session.Time; serverSamples.Clear();
@@ -238,7 +239,7 @@ internal sealed partial class DirectorCreationRuntime
     {
         if (PerformanceActive) throw new InvalidOperationException(L("creation-recording-unavailable"));
         var channel = api.Network.GetChannel(DirectorNetwork.ChannelName);
-        if (!channel.Connected) throw new InvalidOperationException(L("creation-recording-unavailable"));
+        if (!channel.Connected) throw new InvalidOperationException(L("server-required"));
         if (body is not null && (!body.Enabled || !body.Valid())) throw new InvalidOperationException(L("creation-player-body-enable-first"));
         channel.SetMessageHandler<DirectorPerformanceStatus>(OnPerformanceStatus);
         channel.SendPacket(new DirectorPerformanceRequest { Session = Guid.NewGuid().ToString(), Action = body is null ? 5 : 4, CustomBody = body is not null,
@@ -247,6 +248,8 @@ internal sealed partial class DirectorCreationRuntime
     private void TickPerformance(float delta)
     {
         if (!PerformanceActive) return;
+        if (!observingWorldActor && !api.Network.GetChannel(DirectorNetwork.ChannelName).Connected)
+        { StopPerformance(send: false); Status = L("server-required"); return; }
         if (stoppingAt > 0)
         {
             if (api.World.ElapsedMilliseconds - stoppingAt > 5000) StopPerformance(send: false);
@@ -283,6 +286,7 @@ internal sealed partial class DirectorCreationRuntime
     internal void StopPerformance(bool send = true)
     {
         if (!PerformanceActive) return;
+        send &= observingWorldActor || api.Network.GetChannel(DirectorNetwork.ChannelName).Connected;
         if (send && !observingWorldActor && stoppingAt == 0)
         {
             stoppingAt = Math.Max(1, api.World.ElapsedMilliseconds); countdown = -1;

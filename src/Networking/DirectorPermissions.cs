@@ -16,7 +16,6 @@ public enum DirectorPermission : long
     StandardRecording = 1L << 9,
     Workflows = 1L << 11,
     PresetPackages = 1L << 13,
-    SharedCameras = 1L << 14,
     RemoteChunkAccess = 1L << 15,
     ActorRecording = 1L << 16,
     All = OffscreenCurrentView
@@ -27,7 +26,6 @@ public enum DirectorPermission : long
         | FollowCameras
         | ReplayCapture
         | ReplayPlayback
-        | SharedCameras
         | RemoteChunkAccess
         | ActorRecording
 }
@@ -45,6 +43,11 @@ public static class DirectorPermissions
     public static readonly DirectorPermission DefaultPlayerPermissions
         = DirectorPermission.OffscreenCurrentView;
 
+    // Local tools can operate on data already received by the client. These
+    // permissions never authorize server-side chunk loading or player changes.
+    public static readonly DirectorPermission ClientOnlyPermissions
+        = DirectorPermission.All & ~(DirectorPermission.RemoteChunkAccess | DirectorPermission.ActorRecording);
+
     public static readonly IReadOnlyList<DirectorPermissionDefinition> Definitions =
         new[]
         {
@@ -56,7 +59,6 @@ public static class DirectorPermissions
             Define(DirectorPermission.FollowCameras, "follows"),
             Define(DirectorPermission.ReplayCapture, "replay-capture"),
             Define(DirectorPermission.ReplayPlayback, "replay-playback"),
-            Define(DirectorPermission.SharedCameras, "shared-cameras"),
             Define(DirectorPermission.RemoteChunkAccess, "remote-chunks"),
             Define(DirectorPermission.ActorRecording, "actor-recording"),
         };
