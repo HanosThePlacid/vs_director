@@ -7,7 +7,6 @@ namespace VSDirector.Gui;
 /// <summary>Editor styling is scoped to Director; VSImGui and other mods keep their own theme.</summary>
 internal static class DirectorImGuiTheme
 {
-    internal const float FontSize = 20;
     internal static float Scale => (float)Math.Max(.001, GuiElement.scaled(1));
     internal const uint Background = 0xFF282020;
     internal const uint Panel = 0xFF302828;

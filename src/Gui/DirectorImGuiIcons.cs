@@ -128,6 +128,13 @@ internal static class DirectorImGuiIcons
 
     internal static string Get(string name) => Glyphs.GetValueOrDefault(name ?? string.Empty, string.Empty);
 
+    internal static unsafe bool HasGlyphs(ImFontPtr font)
+    {
+        foreach (string glyph in Glyphs.Values)
+            if (font.FindGlyphNoFallback(glyph[0]).NativePtr == null) return false;
+        return true;
+    }
+
     internal static bool Button(string label, System.Numerics.Vector2 size)
     {
         // Native Button clamps text to FramePadding before aligning it. A 20px

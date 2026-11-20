@@ -7,7 +7,7 @@
   "authors": [
     "HansJack (VSCN-Studio)"
   ],
-  "version": "1.0.4-pre.4",
+  "version": "1.0.4-pre.5",
   "side": "universal",
   "requiredOnServer": false,
   "dependencies": {
