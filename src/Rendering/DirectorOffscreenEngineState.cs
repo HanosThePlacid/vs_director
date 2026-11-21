@@ -1,3 +1,4 @@
+using VSDirector.Compatibility;
 using System.Collections;
 using System.Reflection;
 using HarmonyLib;
@@ -503,7 +504,7 @@ internal sealed class DirectorOffscreenEngineState
         game.MainCamera.Yaw = yaw;
         game.MainCamera.Pitch = pitch;
         game.MainCamera.Roll = roll;
-        game.MainCamera.Fov = fov;
+        DirectorClientCompatibility.SetFov(game.MainCamera, fov);
         game.MainCamera.ZNear = zNear;
         game.MainCamera.CameraEyePos.Set(eye);
         game.MainCamera.CamSourcePosition.Set(eye);
@@ -988,7 +989,7 @@ internal sealed class DirectorOffscreenEngineState
                 Yaw = source.Yaw,
                 Pitch = source.Pitch,
                 Roll = source.Roll,
-                Fov = source.Fov,
+                Fov = DirectorClientCompatibility.GetFov(source),
                 ZNear = source.ZNear,
                 ZFar = source.ZFar
             };
@@ -1009,7 +1010,7 @@ internal sealed class DirectorOffscreenEngineState
             target.Yaw = Yaw;
             target.Pitch = Pitch;
             target.Roll = Roll;
-            target.Fov = Fov;
+            DirectorClientCompatibility.SetFov(target, Fov);
             target.ZNear = ZNear;
             target.ZFar = ZFar;
         }

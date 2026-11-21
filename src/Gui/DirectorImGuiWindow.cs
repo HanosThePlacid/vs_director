@@ -400,6 +400,7 @@ internal sealed class DirectorImGuiForm
     internal bool MenuBar { get; set; }
     internal string? Stylesheet { get; set; }
     internal string ClassName { get; set; } = string.Empty;
+    internal float ToolbarRightReserve { get; set; }
     internal string SearchText { get; set; } = string.Empty;
     internal bool Sidebar { get; set; }
     internal Action<string>? SearchChanged { get; set; }
@@ -653,6 +654,7 @@ internal sealed class DirectorImGuiForm
         {
             bool toolbar = ClassName == "workspace-menu";
             float right = ImGui.GetCursorScreenPos().X + ImGui.GetContentRegionAvail().X;
+            if(toolbar)right-=ToolbarRightReserve;
             // Hidden commands must not retain hover targets from a wider layout.
             foreach (var button in buttons) ClearItemBounds(button.Id);
             if (toolbar) ClearItemBounds("toolbar-overflow");

@@ -1,3 +1,4 @@
+using VSDirector.Compatibility;
 using System.Globalization;
 using System.Reflection;
 using System.Runtime.CompilerServices;
@@ -107,10 +108,7 @@ internal static class DirectorReplaySerialization
             return;
         }
 
-        using MemoryStream stream = new(data, writable: false);
-        using BinaryReader reader = new(stream);
-        TreeAttribute tree = new();
-        tree.FromBytes(reader);
+        TreeAttribute tree = DirectorGameCompatibility.Tree(data);
         blockEntity.FromTreeAttributes(tree, world);
         ApplyAnimations(blockEntity, tree);
         ReplayBlockEntityVisualStateRefresh.RefreshAfterDeserialization(blockEntity, world);
@@ -361,9 +359,7 @@ internal static class DirectorReplaySerialization
 
         try
         {
-            using MemoryStream stream = new(data, writable: false);
-            using BinaryReader reader = new(stream);
-            AnimationMetaData metadata = AnimationMetaData.FromBytes(reader, GameVersion.ShortGameVersion);
+            AnimationMetaData metadata = DirectorGameCompatibility.Animation(data, GameVersion.ShortGameVersion);
             if (string.IsNullOrWhiteSpace(metadata.Code))
             {
                 return false;

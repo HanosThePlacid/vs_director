@@ -19,8 +19,6 @@ public static class DirectorNetwork
             .RegisterMessageType<DirectorChunkPreloadColumn>()
             .RegisterMessageType<DirectorChunkPreloadRequest>()
             .RegisterMessageType<DirectorChunkPreloadStatus>()
-            .RegisterMessageType<DirectorSharedCameraRequest>()
-            .RegisterMessageType<DirectorSharedCameraCatalog>()
             .RegisterMessageType<DirectorPerformanceRequest>()
             .RegisterMessageType<DirectorPerformanceStatus>();
     }
@@ -97,73 +95,6 @@ public sealed class DirectorPermissionMemberDto
 
     [ProtoMember(6)]
     public long PermissionMask;
-}
-
-public enum DirectorSharedCameraAction
-{
-    List,
-    Upsert,
-    Delete
-}
-
-[ProtoContract]
-public sealed class DirectorSharedCameraRequest
-{
-    [ProtoMember(1)]
-    public int Action;
-
-    [ProtoMember(2)]
-    public DirectorSharedCameraDto Camera = new();
-
-    [ProtoMember(3)]
-    public string CameraId = string.Empty;
-}
-
-[ProtoContract]
-public sealed class DirectorSharedCameraCatalog
-{
-    [ProtoMember(1)]
-    public List<DirectorSharedCameraDto> Cameras = new();
-
-    [ProtoMember(2)]
-    public string Error = string.Empty;
-}
-
-[ProtoContract]
-public sealed class DirectorSharedCameraDto
-{
-    [ProtoMember(1)]
-    public string Id = string.Empty;
-
-    [ProtoMember(2)]
-    public string Name = string.Empty;
-
-    [ProtoMember(3)]
-    public double X;
-
-    [ProtoMember(4)]
-    public double Y;
-
-    [ProtoMember(5)]
-    public double Z;
-
-    [ProtoMember(6)]
-    public float Yaw;
-
-    [ProtoMember(7)]
-    public float Pitch;
-
-    [ProtoMember(8)]
-    public float Roll;
-
-    [ProtoMember(9)]
-    public float Fov = 70f;
-
-    [ProtoMember(10)]
-    public int Dimension;
-
-    [ProtoMember(11)]
-    public long ModifiedUtcTicks;
 }
 
 [ProtoContract]

@@ -7,7 +7,7 @@
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <AssemblyName>VSDirector</AssemblyName>
     <RootNamespace>VSDirector</RootNamespace>
-    <Version>1.0.4-pre.9</Version>
+    <Version>1.0.4-pre.10</Version>
     <Authors>HansJack (VSCN-Studio)</Authors>
     <Copyright>Copyright (c) 2026 HansJack (VSCN-Studio)</Copyright>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
@@ -19,8 +19,11 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <Reference Include="Newtonsoft.Json" HintPath="$(VintageStoryPath)\Lib\Newtonsoft.Json.dll" Private="false" />
     <Reference Include="OpenTK.Mathematics" HintPath="$(VintageStoryPath)\Lib\OpenTK.Mathematics.dll" Private="false" />
     <Reference Include="OpenTK.Audio.OpenAL" HintPath="$(VintageStoryPath)\Lib\OpenTK.Audio.OpenAL.dll" Private="false" />
+    <Reference Include="OpenTK.Graphics" HintPath="$(VintageStoryPath)\Lib\OpenTK.Graphics.dll" Private="false" />
+    <Reference Include="Optimum.Api.Contracts" HintPath="$(VintageStoryPath)/Optimum.Api.Contracts.dll" Private="false" Condition="Exists('$(VintageStoryPath)/Optimum.Api.Contracts.dll')" />
     <Reference Include="VSImGui" HintPath="$(VSImGuiPath)\VSImGui.dll" Private="false" />
     <Reference Include="ImGui.NET" HintPath="$(VSImGuiPath)\ImGui.NET.dll" Private="false" />
     <Reference Include="ImGuizmo.NET" HintPath="$(VSImGuiPath)\ImGuizmo.NET.dll" Private="false" />
@@ -31,6 +34,8 @@
       <HintPath>$(VintageStoryPath)\VintagestoryAPI.dll</HintPath>
       <Private>false</Private>
     </Reference>
+    <Reference Include="VSEssentials" HintPath="$(VintageStoryPath)\Mods\VSEssentials.dll" Private="false" />
+    <Reference Include="VSSurvivalMod" HintPath="$(VintageStoryPath)\Mods\VSSurvivalMod.dll" Private="false" />
     <Reference Include="VintagestoryLib">
       <HintPath>$(VintageStoryPath)\VintagestoryLib.dll</HintPath>
       <Private>false</Private>

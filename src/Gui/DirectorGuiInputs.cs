@@ -1,3 +1,4 @@
+using VSDirector.Compatibility;
 using Cairo;
 using HarmonyLib;
 using System.Globalization;
@@ -2220,7 +2221,7 @@ internal sealed class GuiElementDirectorNumberInput : GuiElementNumberInput
             * (Key(api, GlKeys.LShift, GlKeys.RShift) ? 10 : 1);
         dragValue += (args.X - lastDragX) / Math.Max(.001, GuiElement.scaled(1)) * step;
         lastDragX = args.X;
-        if (double.IsFinite(dragValue)) SetValue(DirectorNumberFormatting.Format(IntMode ? Math.Round(dragValue) : dragValue));
+        if (double.IsFinite(dragValue)) this.SetDirectorValue(DirectorNumberFormatting.Format(IntMode ? Math.Round(dragValue) : dragValue));
         args.Handled = true;
     }
 
@@ -3772,7 +3773,7 @@ internal sealed class GuiElementDirectorColorPopover : GuiElementDirectorFixedPo
         updatingInput = true;
         try
         {
-            hexInput.SetValue(text);
+            hexInput.SetDirectorValue(text);
         }
         finally
         {
@@ -4212,7 +4213,7 @@ internal sealed class GuiElementDirectorTimePopover : GuiElementDirectorFixedPop
         updatingInput = true;
         try
         {
-            timeInput.SetValue(text);
+            timeInput.SetDirectorValue(text);
         }
         finally
         {

@@ -1,3 +1,4 @@
+using VSDirector.Compatibility;
 using System.Globalization;
 using System.Net;
 using Vintagestory.API.Client;
@@ -465,9 +466,9 @@ internal sealed partial class DirectorWorkspaceHud : GuiDialog
 
     public override bool DisableMouseGrab => !layout.NavigationMode && !(creationWorkspace?.Active == true && owner.Creation.ControllingActor);
 
-    public override bool ShouldReceiveKeyboardEvents() => IsOpened() && !layout.NavigationMode;
+    public override bool ShouldReceiveKeyboardEvents() => IsOpened() && !layout.NavigationMode && !(creationWorkspace?.Active == true && owner.Creation.NativeAppearanceEditorOpen);
 
-    public override bool ShouldReceiveMouseEvents() => IsOpened() && !layout.NavigationMode;
+    public override bool ShouldReceiveMouseEvents() => IsOpened() && !layout.NavigationMode && !(creationWorkspace?.Active == true && owner.Creation.NativeAppearanceEditorOpen);
 
     internal bool ShouldRouteFloatingEditorInput
         => !disposed && IsOpened() && !layout.NavigationMode;
@@ -1181,6 +1182,7 @@ internal sealed partial class DirectorWorkspaceHud : GuiDialog
 
     public override void OnMouseMove(MouseEvent args)
     {
+        if (creationWorkspace?.Active == true && owner.Creation.NativeAppearanceEditorOpen) return;
         if (creationWorkspace?.Active == true && owner.Creation.ControllingActor) return;
         if (creationWorkspace?.Active == true) { if (!replayViewportFreeCameraPointerActive) args.Handled = true; return; }
         CheckPaneSplitRelease();
@@ -1462,6 +1464,7 @@ internal sealed partial class DirectorWorkspaceHud : GuiDialog
 
     public override void OnMouseUp(MouseEvent args)
     {
+        if (creationWorkspace?.Active == true && owner.Creation.NativeAppearanceEditorOpen) return;
         if (creationWorkspace?.Active == true && owner.Creation.ControllingActor) return;
         if (creationWorkspace?.Active == true) { EndReplayViewportFreeCameraPointerInput(); args.Handled = true; return; }
         if (GuiElementDirectorNumberInput.Captured is { } number)
@@ -1780,6 +1783,7 @@ internal sealed partial class DirectorWorkspaceHud : GuiDialog
 
     public override void OnMouseWheel(MouseWheelEventArgs args)
     {
+        if (creationWorkspace?.Active == true && owner.Creation.NativeAppearanceEditorOpen) return;
         if (creationWorkspace?.Active == true && owner.Creation.ControllingActor) return;
         if (creationWorkspace?.Active == true) { args.SetHandled(); return; }
         if (args.IsHandled)
@@ -2042,6 +2046,9 @@ internal sealed partial class DirectorWorkspaceHud : GuiDialog
 
     public override void OnKeyDown(KeyEvent args)
     {
+        // Native inventory and character dialogs own keyboard input while open,
+        // including their search fields and Escape handling.
+        if (creationWorkspace?.Active == true && owner.Creation.NativeAppearanceEditorOpen) return;
         if (creationWorkspace?.Active == true) { if (args.KeyCode == (int)GlKeys.Escape) { creationWorkspace.RequestEscape(); args.Handled = true; } else args.Handled = !owner.Creation.ControllingActor; return; }
         if (!args.Handled && args.KeyCode == (int)GlKeys.Escape)
         {
@@ -3185,18 +3192,18 @@ internal sealed partial class DirectorWorkspaceHud : GuiDialog
 
         composer.zDepth = 35f;
         Composers[key] = composer.Compose(focusFirstElement: false);
-        Composers[key].GetTextInput("actionLibrarySearch")?.SetValue(actionLibrarySearch);
+        Composers[key].GetTextInput("actionLibrarySearch")?.SetDirectorValue(actionLibrarySearch);
         Composers[key].GetTextInput("actionLibrarySearch")?.SetPlaceHolderText(
             Lang.Get("vsdirector:search-placeholder"));
-        Composers[key].GetTextInput("actionLibraryNewName")?.SetValue(newName);
+        Composers[key].GetTextInput("actionLibraryNewName")?.SetDirectorValue(newName);
         Composers[key].GetTextInput("actionLibraryNewName")?.SetPlaceHolderText(
             Lang.Get(actionLibraryMode == "expressions"
                 ? "vsdirector:expression-name-placeholder"
                 : "vsdirector:action-name-placeholder"));
-        Composers[key].GetTextInput("actionLibraryImportPath")?.SetValue(actionImportPathText);
+        Composers[key].GetTextInput("actionLibraryImportPath")?.SetDirectorValue(actionImportPathText);
         Composers[key].GetTextInput("actionLibraryImportPath")?.SetPlaceHolderText(
             Lang.Get("vsdirector:action-import-path-placeholder"));
-        Composers[key].GetTextInput("modelLibraryImportPath")?.SetValue(modelImportPathText);
+        Composers[key].GetTextInput("modelLibraryImportPath")?.SetDirectorValue(modelImportPathText);
         Composers[key].GetTextInput("modelLibraryImportPath")?.SetPlaceHolderText(
             Lang.Get("vsdirector:model-import-path-placeholder"));
         DirectorGuiFocus.Restore(Composers[key], focus);
@@ -5923,11 +5930,11 @@ internal sealed partial class DirectorWorkspaceHud : GuiDialog
                 DeleteLabel(sequence.Id, "vsdirector:delete-sequence"), DeleteSequenceEditor,
                 ElementBounds.Fixed(46, y + 4, 30, 28), EnumButtonStyle.Small, "deleteSequence");
         }
-        composer.GetNumberInput("shotDuration")?.SetValue(
+        composer.GetNumberInput("shotDuration")?.SetDirectorValue(
             DirectorNumberFormatting.Format(CameraSequenceSampler.DefaultShotDurationSeconds));
         for (int index = firstShot; index < lastShot; index++)
         {
-            composer.GetNumberInput("shot-" + index)?.SetValue(
+            composer.GetNumberInput("shot-" + index)?.SetDirectorValue(
                 DirectorNumberFormatting.Format(sequence.Shots[index].DurationSeconds));
         }
     }
@@ -6012,11 +6019,11 @@ internal sealed partial class DirectorWorkspaceHud : GuiDialog
                 ElementBounds.Fixed(10, y + 4, 82, 28), EnumButtonStyle.Small, "playSequence")
             .AddSmallButton(DeleteLabel(sequence.Id), DeleteSequenceEditor,
                 ElementBounds.Fixed(98, y + 4, 92, 28), EnumButtonStyle.Small, "deleteSequence");
-        composer.GetNumberInput("shotDuration")?.SetValue(
+        composer.GetNumberInput("shotDuration")?.SetDirectorValue(
             DirectorNumberFormatting.Format(CameraSequenceSampler.DefaultShotDurationSeconds));
         for (int index = firstShot; index < lastShot; index++)
         {
-            composer.GetNumberInput("shot-" + index)?.SetValue(
+            composer.GetNumberInput("shot-" + index)?.SetDirectorValue(
                 DirectorNumberFormatting.Format(sequence.Shots[index].DurationSeconds));
         }
     }
@@ -13095,7 +13102,7 @@ internal sealed partial class DirectorWorkspaceHud : GuiDialog
         SetInput(composer, "workflowCardName", workflowCard?.Name);
         if (workflowCard is not null)
         {
-            composer.GetTextArea("workflowNotes")?.SetValue(workflowCard.Notes);
+            composer.GetTextArea("workflowNotes")?.SetDirectorValue(workflowCard.Notes);
         }
         SetInput(composer, "followName", followEdit?.Name);
         SetInput(composer, "followTags", followEdit is null ? null : string.Join(", ", followEdit.Tags));
@@ -13298,7 +13305,7 @@ internal sealed partial class DirectorWorkspaceHud : GuiDialog
     {
         if (value is not null && composer.GetElement(key) is GuiElementTextInput input)
         {
-            input.SetValue(value);
+            input.SetDirectorValue(value);
         }
     }
 
@@ -13316,7 +13323,7 @@ internal sealed partial class DirectorWorkspaceHud : GuiDialog
             && double.IsFinite(number)
             && composer.GetElement(key) is GuiElementNumberInput input)
         {
-            input.SetValue(DirectorNumberFormatting.Format(number));
+            input.SetDirectorValue(DirectorNumberFormatting.Format(number));
         }
     }
 

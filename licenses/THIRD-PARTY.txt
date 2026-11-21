@@ -6,20 +6,118 @@ License: MIT; full text: ../assets/vsdirector/fonts/tabler/LICENSE
 Source: https://github.com/tabler/tabler-icons/tree/v3.34.1
 Distributed resources: assets/vsdirector/fonts/tabler/tabler-icons.ttf and
 assets/vsdirector/textures/icons/tabler/*.svg.
-SVG resources include outline and filled variants. The font is registered
-under the local UI family alias "vsdirector-tabler".
+SVG resources include outline and filled variants. Icon glyphs are merged
+into the game's current default ImGui font; no text font is bundled.
 
-Noto Sans SC Regular
-Copyright 2014-2021 Adobe (http://www.adobe.com/), with Reserved Font Name 'Source'.
-License: SIL Open Font License 1.1; full text:
-../assets/vsdirector/fonts/noto/OFL.txt
-Source: https://github.com/google/fonts/tree/main/ofl/notosanssc
-Distributed resource: assets/vsdirector/fonts/noto/NotoSansSC-Regular.ttf
-(static regular instance generated from the upstream variable font).
+InGameDevTools (Alodh and contributors)
+Source: https://github.com/Alodh1/InGameDevTools
+Reference revision: 499cd9d1a37cb687cbb421b1e93715344aa38446
+  Native held-item attachment composition in DirectorCreationMath.cs and
+  DirectorCreationRuntime.Objects.cs adapted from
+  Animations/VanillaAnimationEditor.PreviewSupport.cs.
+Adapted FromTo rotation safeguards from Animations/RigPoseEditor.cs;
+bone handle and IK workflow informed by VanillaAnimationEditor.Viewport.cs
+and VanillaAnimationEditor.IkSymmetry.cs. Used in DirectorCreationActors.cs
+and the creation rig editor. Direct pose picking and topology-based CCD workflow
+are informed by the same viewport/IK sources; implemented for Director transforms
+in DirectorCreationPoseGeometry.cs and DirectorCreationRigSelection.cs.
+The contextual body inspector and bounded automatic chains also reference
+VanillaAnimationEditor.Browser.cs and VanillaAnimationEditor.IkSymmetry.cs. License: MIT; full text: InGameDevTools-MIT.txt.
+Author authorization supplied by the project maintainer:
+https://discord.com/channels/302152934249070593/1510578112889622639/1569719241773416459
+Particle editor parameter groups, recursive native JSON editing and camera-facing
+preview design reference Utils/ParticleEffectsManager.cs and
+Utils/PreviewParticleSystem.cs. Client-only block/item replacement also references
+Integration/ParticleRuntimePatches.cs at the revision above. The adaptation targets
+the Vintage Story 1.22.3 AdvancedParticleProperties JSON contract, including random
+distributions, lifecycle evolution, secondary/death providers and runtime context.
+DirectorCreationParticleResources.cs, DirectorCreationWorkspace.AdvancedParticles.cs,
+DirectorCreationParticleSimulation.cs and DirectorCreationRenderer.Particles.cs
+independently implement resource scanning, restoration, deterministic fixed-step
+timeline simulation, collision queries and batched rendering. Unsupported native
+shader flags are retained with warnings; unsafe native Clone fields reject client
+replacement. No InGameDevTools runtime is bundled. The MIT notice above is retained.
+The v3 module editor additionally references the preview speed/density controls
+and native lifetime/size units in Utils/PreviewParticleSystem.cs. The explicit
+reference-fuel fire recipe in DirectorParticlePreparation.cs follows the behavior
+of Vintage Story BEBehaviorBurning.onAsyncParticles/RandomBlockPos; no game
+behavior is executed by browsing or imported-effect simulation. The reference
+recipe is labelled and does not reproduce all live fuel/face/weather conditions.
+Validation uses the installed Vintage Story 1.22.7.0 assemblies as well as the
+1.22.3 JSON/API reference. Runtime/unknown shader fields remain export-only where
+indicated by the editor; unsupported native application is rejected.
+
+BBS-FS (McHorse and Wemppy)
+Copyright 2025 McHorse
+Copyright 2026 Wemppy
+Source: https://github.com/Wemppy4/bbs-fs
+Reference revision: 13bd62dab1980b974b8ea0f78d037e8e82684b84
+License: MIT; full text: BBS-FS-MIT.txt.
+Creation editor workflow, shared timeline context, track filtering/folding and
+contextual property organization informed by UIReplaysEditor.java,
+UIKeyframeEditor.java, UIFilmPanel.java and UIPoseEditor.java. Independently implemented for
+Vintage Story Shape, actor attachments and Director creation data; no Minecraft
+assets or BBS-FS runtime are bundled.
+Particle module organization, curve/gradient editing, bounded parameter expressions,
+shape/rate/motion/expiration controls and user preset workflow reference
+ui/particles/UIParticleSchemePanel.java, ui/particles/sections/
+UIParticleSchemeShapeSection.java, UIParticleSchemeRateSection.java,
+UIParticleSchemeMotionSection.java, UIParticleSchemeExpirationSection.java,
+and ui/particles/utils/UICurveEditor.java, UIGradientEditor.java and
+UIMolangExpression.java at the revision above. Independent C# implementations:
+DirectorCreationParticleModules.cs, DirectorParticleExpression.cs,
+DirectorCreationParticleSimulation.Modules.cs, DirectorParticlePresetLibrary.cs,
+DirectorCreationWorkspace.ParticleHierarchy.cs, .ParticleModules.cs,
+.ParticleTimeline.cs, .ParticleLibrary.cs and .ParticlePresetPicker.cs.
+Director expressions and presets use Director's own grammar/schema; they are
+not a MoLang, Bedrock, Snowstorm or BBS file importer. No Java source is bundled.
+Timeline track/all selection and keyframe context operations also reference
+UIKeyframes.java, independently implemented for Director's creation timeline.
+Actor equipment and appearance editing follows BBS-FS's separate actor state
+workflow; selection and skin/clothing composition use Vintage Story public APIs.
+World-scoped project discovery also references BBSMod.java, FilmManager.java
+and ServerNetwork.java. Director independently implements world/dimension
+validation in its own project storage format.
+Minimal IK overlays and contextual chain editing also reference
+ValueIKDebug.java, ValueModelDebug.java, ModelIKDebug.java and
+UIModelIKFormPanel.java. Control visibility, picking and settings are
+independently implemented for Director; no Minecraft runtime is bundled.
+
+Mine-imator (David Norgren / stuffbydavid and contributors)
+Source: https://github.com/stuffbydavid/Mine-imator
+Reference revision: eda12dd0db7cb5892fc068491c60259dba0aa154
+License: MIT; permission text: Mine-imator-MIT.txt.
+Author confirmation by stuffbydavid, 2026-10-20:
+https://github.com/stuffbydavid/Mine-imator/issues/72#issuecomment-6297706623
+The author states that the codebase is under MIT and permits forks/clones,
+with the exact license file to be uploaded to the repository.
+The included MIT notice records this authorization; it is not represented as
+a copy of an upstream LICENSE file. Direct selection, visible transform tools
+and viewport manipulation are informed by view_toolbar_draw.gml and the
+Mine-imator editor workflow, independently implemented with Director's shared
+handles. No Mine-imator runtime, GameMaker components or Minecraft assets
+are bundled; the authorization does not license third-party game resources.
+
+Fieldwright (Jeffrey Lueken / Venah), via Buildwright
+Reference: local VS_BuildWright revision 9b15446cd4049a4b0f86299ee57688ba80580b53.
+Fieldwright license: MIT; full text: Fieldwright-MIT.txt.
+Buildwright original code shares this project's author and is covered by ../LICENSE.
+Adapted Core/BlueprintModel.cs, Core/BlueprintCodec.cs, Client/RegionCapture.cs,
+Client/BlockEntityCapture.cs and Client/BuildwrightGhostMesh.cs into
+src/Blueprints/Adapted/. BlueprintFluidMesher.cs adapts the isolated chunk
+geometry workflow from Client/BlueprintTerrainProjection.cs. Fieldwright notices
+are retained in these files. Director independently integrates project-owned
+blueprint assets, cached resource browsing, transforms, particle child objects,
+standalone orbit preview and FFmpeg GIF/APNG export. Structure editing, slicing,
+growth/material layers, edge particles, deterministic visual physics and grouped
+structure timelines are independent Director implementations. No Buildwright mod system,
+server placement or world mutation code is invoked. The optional compatibility
+bridge uses an already installed Buildwright assembly; none is bundled.
 
 Runtime dependencies
-Vintage Story and its game assemblies, Harmony, protobuf-net, cairo-sharp and
-OpenTK.Mathematics are supplied by the game installation and are not bundled
+Vintage Story and its game assemblies (including VSEssentials and VSSurvivalMod),
+Harmony, protobuf-net, cairo-sharp and
+OpenTK.Mathematics and OpenTK.Graphics are supplied by the game installation and are not bundled
 in this mod ZIP.
 VSImGui and its ImGui-related assemblies are supplied by the separately
 installed VSImGui mod and are not bundled in this mod ZIP.

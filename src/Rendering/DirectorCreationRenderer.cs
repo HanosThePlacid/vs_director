@@ -11,7 +11,7 @@ using VSDirector.Data;
 namespace VSDirector.Rendering;
 
 /// <summary>Local visual objects; meshes and poses never modify the game's shared shapes.</summary>
-internal sealed class DirectorCreationRenderer : IRenderer
+internal sealed partial class DirectorCreationRenderer : IRenderer
 {
     private readonly ICoreClientAPI api;
     private readonly DirectorCreationSession session;
@@ -19,6 +19,7 @@ internal sealed class DirectorCreationRenderer : IRenderer
     private IShaderProgram? shader;
     private readonly Dictionary<string, MeshRef> meshes = new();
     private readonly Dictionary<string, MultiTextureMeshRef> nativeMeshes = new();
+    internal Dictionary<Guid, ItemRenderInfo> HeldItems { get; } = new();
     private readonly Dictionary<string, int> textures = new();
     private readonly List<LoadedTexture> ownedTextures = new();
     private long revision = -1;
@@ -30,7 +31,8 @@ internal sealed class DirectorCreationRenderer : IRenderer
         return meshes[key] = api.Render.UploadMesh(build());
     }
     internal bool Visible { get; set; } = true;
-    internal bool NativeParticlesActive { get; set; }
+    internal IReadOnlyList<CreationSimulatedParticle> AdvancedParticles { get; set; } = [];
+    internal IReadOnlyList<CreationParticleRibbon> ParticleRibbons { get; set; } = [];
     internal string Error { get; private set; } = "";
     public double RenderOrder => .69;
     public int RenderRange => 9999;
@@ -42,6 +44,7 @@ internal sealed class DirectorCreationRenderer : IRenderer
     }
     private bool ReloadShader()
     {
+        DisposeSelectionShaders();
         shader?.Dispose(); shader = api.Shader.NewShaderProgram(); shader.AssetDomain = "vsdirector";
         shader.VertexShader = api.Shader.NewShader(EnumShaderType.VertexShader);
         shader.FragmentShader = api.Shader.NewShader(EnumShaderType.FragmentShader);
@@ -62,23 +65,40 @@ internal sealed class DirectorCreationRenderer : IRenderer
             previous?.Stop();
             game.Platform.GlEnableDepthTest(); game.Platform.GlDepthMask(false); game.Platform.GlDisableCullFace(); game.Platform.GlToggleBlend(on: true); shader!.Use();
             shader.UniformMatrix("projectionMatrix", game.CurrentProjectionMatrix);
+            shader.Uniform("lightDirection", game.shUniforms.LightPosition3D);
+            shader.Uniform("fogColor", api.Render.FogColor);
+            shader.Uniform("fogDensity", api.Render.FogDensity);
+            shader.Uniform("fogMinimum", api.Render.FogMin);
             // Share the exact double-precision world-view basis with viewport
             // picking/gizmos, including native eye offsets and offscreen views.
-            shader.UniformMatrix("viewMatrix", DirectorCreationMath.ProjectView(game.PerspectiveViewMat, project.Origin, project.Dimension * (double)BlockPos.DimensionBoundary));
+            var view=DirectorCreationMath.ProjectView(game.PerspectiveViewMat, project.Origin, project.Dimension * (double)BlockPos.DimensionBoundary);
+            shader.UniformMatrix("viewMatrix", view);
             CreationVector origin = default;
-            var cameraLocal = new CreationVector(player.CameraPos.X, player.CameraPos.Y - project.Dimension * (double)BlockPos.DimensionBoundary, player.CameraPos.Z) - project.Origin;
+            Matrix4x4.Invert(new(view[0],view[1],view[2],view[3],view[4],view[5],view[6],view[7],view[8],view[9],view[10],view[11],view[12],view[13],view[14],view[15]),out var inverseView);
+            var cameraLocal = inverseView.Translation;
             // Far-to-near alpha blending; retain world occlusion without writing particle/plane depth.
             foreach (var state in frame.Objects.Values.Where(s => s.Visible)
                 .OrderBy(s => s.Source.Opacity < .999 || s.Source.Kind is CreationObjectKind.Image or CreationObjectKind.Text or CreationObjectKind.Particle)
-                .ThenByDescending(s => Vector3.DistanceSquared(s.World.Translation, cameraLocal.Float())))
+                .ThenByDescending(s => Vector3.DistanceSquared(s.World.Translation, cameraLocal)))
             {
                 var obj = state.Source;
+                shader.Uniform("particleMask", 0);shader.Uniform("particleUv",0f,0f,1f,1f);
+                shader.Uniform("vertexColorMode", 0);
                 if (project.Visuals.World.ShowEntities == false && obj.Kind is CreationObjectKind.Model or CreationObjectKind.Item) continue;
                 if (!project.Visuals.World.ShowPlayers && obj.ActorSource?.EntityCode.Contains("player", StringComparison.OrdinalIgnoreCase) == true) continue;
                 if (!project.Visuals.Particles.ShowParticles && obj.Kind == CreationObjectKind.Particle) continue;
                 game.Platform.GlDepthMask(obj.Opacity >= .999 && obj.Kind is CreationObjectKind.Model or CreationObjectKind.Item or CreationObjectKind.Structure);
                 shader.Uniform("tint", (float)state.Color.X, (float)state.Color.Y, (float)state.Color.Z, (float)obj.Opacity);
                 shader.Uniform("glow", (float)obj.Glow);
+                shader.Uniform("surfaceShading", obj.Kind is CreationObjectKind.Model or CreationObjectKind.Item or CreationObjectKind.Structure ? 1 : 0);
+                var lightPosition = CreationVector.From(state.World.Translation) + project.Origin;
+                var light = api.World.BlockAccessor.GetLightRGBs(new BlockPos(
+                    (int)Math.Floor(lightPosition.X),
+                    (int)Math.Floor(lightPosition.Y + .75) + project.Dimension * BlockPos.DimensionBoundary,
+                    (int)Math.Floor(lightPosition.Z)));
+                var ambient = api.Render.AmbientColor;
+                shader.Uniform("worldLight", Math.Max(light.X, light.W * ambient.X),
+                    Math.Max(light.Y, light.W * ambient.Y), Math.Max(light.Z, light.W * ambient.Z));
                 if (obj.Kind is CreationObjectKind.Item or CreationObjectKind.Structure)
                 {
                     RenderNativeObject(project, state, obj, origin);
@@ -86,7 +106,8 @@ internal sealed class DirectorCreationRenderer : IRenderer
                 else if (obj.Kind == CreationObjectKind.Model)
                 {
                     var model = project.Models.Find(m => m.Id == obj.ModelId); if (model is null) continue;
-                    foreach (var part in model.Parts.Where(p => !p.Group && !state.HiddenParts.Contains(p.Id)))
+                    var deformations=DirectorCreationJointSeams.Deformations(model,state);
+                    foreach (var part in model.Parts.Where(p => !p.Group && p.Visible && !state.HiddenParts.Contains(p.Id)))
                     {
                         if (!state.Bones.TryGetValue(part.Id, out var bone)) continue;
                         var matrix = bone * state.World * Matrix4x4.CreateTranslation(origin.Float());
@@ -94,9 +115,7 @@ internal sealed class DirectorCreationRenderer : IRenderer
                         foreach (var face in part.Faces)
                         {
                             if (face.Value is not JsonObject f || f["enabled"]?.ToString() == "false") continue;
-                            string key = model.Id + "/" + part.Id + "/" + face.Key;
-                            if (!meshes.TryGetValue(key, out var mesh) || geometryChanged)
-                                mesh = Geometry(key, JsonSerializer.Serialize(new { Size = part.To - part.From, part.Inflate, model.TextureWidth, model.TextureHeight, Face = f, Sizes = model.Extra["textureSizes"] }), () => CubeFace(part, face.Key, f, model));
+                            var mesh = ModelFaceMesh(model, part, face.Key, f, obj.Id, deformations, geometryChanged);
                             string texture = DirectorCreationShape.S(f, "texture", "#all").TrimStart('#');
                             BindTexture(project, model.Textures.GetValueOrDefault(texture, ""));
                             game.Platform.RenderMesh(mesh);
@@ -123,9 +142,10 @@ internal sealed class DirectorCreationRenderer : IRenderer
                 }
                 else if (obj.Kind == CreationObjectKind.Particle)
                 {
-                    RenderParticles(state, obj, origin);
+                    if(obj.ParticleEffect is null)RenderParticles(state, obj, origin);
                 }
             }
+            if(project.Visuals.Particles.ShowParticles){RenderAdvancedParticles(frame.Objects);RenderParticleRibbons(frame.Objects);}
             revision = session.Revision; Error = "";
         }
         catch (Exception e) { Error = Message(e.Message); }
@@ -133,29 +153,58 @@ internal sealed class DirectorCreationRenderer : IRenderer
     }
     private void RenderParticles(CreationObjectState state, CreationSceneObject obj, CreationVector origin)
     {
-        if (NativeParticlesActive && obj.NativeParticles) return;
-        string key = "particle-plane";
-        if (!meshes.TryGetValue(key, out var mesh)) meshes[key] = mesh = api.Render.UploadMesh(Quad(
-            [new(-1, -1, 0), new(1, -1, 0), new(1, 1, 0), new(-1, 1, 0)], 0, 0, 1, 1, 0));
-        Matrix4x4 facing = Matrix4x4.Identity;
-        if (Matrix4x4.Invert(new Matrix4x4(game.MainCamera.CameraMatrixOriginf[0], game.MainCamera.CameraMatrixOriginf[1], game.MainCamera.CameraMatrixOriginf[2], 0,
-            game.MainCamera.CameraMatrixOriginf[4], game.MainCamera.CameraMatrixOriginf[5], game.MainCamera.CameraMatrixOriginf[6], 0,
-            game.MainCamera.CameraMatrixOriginf[8], game.MainCamera.CameraMatrixOriginf[9], game.MainCamera.CameraMatrixOriginf[10], 0, 0, 0, 0, 1), out var inv)) facing = inv;
-        shader!.Uniform("textured", 0);
-        foreach (var particle in DirectorCreationParticles.Sample(obj, session.Frame!.Time))
+        var settings = obj.ParticleSettings ?? CreationParticleSettings.Preset(obj.ResourceCode);
+        bool cube = settings.Shape == CreationParticleShape.Cube;
+        string key = cube ? "particle-cube" : "particle-plane";
+        if (!meshes.TryGetValue(key, out var mesh))
         {
-            Vector3 center = Vector3.Transform(particle.Position.Float(), state.World) + origin.Float();
-            Matrix4x4 world = Matrix4x4.CreateScale((float)particle.Size) * facing * Matrix4x4.CreateTranslation(center);
-            shader.Uniform("tint", (float)state.Color.X, (float)state.Color.Y, (float)state.Color.Z, (float)(obj.Opacity * particle.Alpha));
-            shader.Uniform("glow", (float)Math.Clamp(obj.Glow + 0.2, 0, 1));
+            var data = Quad([new(-.5f,-.5f,0),new(.5f,-.5f,0),new(.5f,.5f,0),new(-.5f,.5f,0)],0,0,1,1,0);
+            if(cube)
+            {
+                data = new MeshData(24,36,withNormals:false,withUv:true);
+                Vector3[] points = Enumerable.Range(0,8).Select(i=>new Vector3((i&1)==0?-.5f:.5f,(i&2)==0?-.5f:.5f,(i&4)==0?-.5f:.5f)).ToArray();
+                foreach(int[] face in new int[][] { [0,1,3,2],[4,6,7,5],[0,4,5,1],[2,3,7,6],[0,2,6,4],[1,5,7,3] })
+                    data.AddMeshData(Quad(face.Select(i=>points[i]).ToArray(),0,0,1,1,0));
+            }
+            meshes[key]=mesh=api.Render.UploadMesh(data);
+        }
+        // The active view is also replaced during offscreen renders. MainCamera's
+        // cached basis belongs to the editor and can turn preview quads edge-on.
+        var m=game.PerspectiveViewMat;
+        Matrix4x4.Invert(new((float)m[0],(float)m[1],(float)m[2],0,(float)m[4],(float)m[5],(float)m[6],0,
+            (float)m[8],(float)m[9],(float)m[10],0,0,0,0,1),out var facing);
+        Matrix4x4.Decompose(state.World,out var scale,out var rotation,out _);
+        scale=Vector3.Abs(scale);
+        BindTexture(session.Project!,settings.Texture);
+        shader!.Uniform("particleMask",settings.Shape==CreationParticleShape.SoftQuad?1:0);
+        shader.Uniform("surfaceShading",cube?1:0);
+        shader.Uniform("glow",(float)obj.Glow);
+        var particles=DirectorCreationParticles.Sample(obj,session.Frame!.Time)
+            .Select(p=>(Particle:p,Center:Vector3.Transform(p.Position.Float(),state.World)+origin.Float()))
+            .OrderBy(p=>m[2]*p.Center.X+m[6]*p.Center.Y+m[10]*p.Center.Z);
+        foreach (var (particle,center) in particles)
+        {
+            Matrix4x4 world = Matrix4x4.CreateScale(scale*(float)particle.Size)
+                * Matrix4x4.CreateRotationZ((float)(particle.Rotation*Math.PI/180))
+                * (cube?Matrix4x4.CreateFromQuaternion(rotation):facing) * Matrix4x4.CreateTranslation(center);
+            var color=state.Color*(1-particle.Progress)+settings.EndColor*particle.Progress;
+            shader.Uniform("tint", (float)color.X, (float)color.Y, (float)color.Z, (float)(obj.Opacity * particle.Alpha));
             shader.UniformMatrix("modelMatrix", Array(world));
             game.Platform.RenderMesh(mesh);
         }
+        shader.Uniform("particleMask",0);
     }
     private void RenderNativeObject(DirectorCreationProject project, CreationObjectState state, CreationSceneObject obj, CreationVector origin)
     {
         if (obj.Kind == CreationObjectKind.Item)
         {
+            if (HeldItems.TryGetValue(obj.Id, out var held))
+            {
+                shader!.Uniform("textured", 1);
+                shader.UniformMatrix("modelMatrix", Array(state.World * Matrix4x4.CreateTranslation(origin.Float())));
+                api.Render.RenderMultiTextureMesh(held.ModelRef, "tex");
+                return;
+            }
             string code = (state.ResourceOverride ?? obj.ResourceCode).Trim();
             if (code.Length == 0) return;
             string key = "item:" + code;
@@ -175,6 +224,7 @@ internal sealed class DirectorCreationRenderer : IRenderer
             api.Render.RenderMultiTextureMesh(mesh, "tex");
             return;
         }
+        if(obj.Projection is not null){RenderProjection(project,state);return;}
         if (obj.Blocks.Count == 0) return;
         foreach (var blockData in obj.Blocks)
         {
@@ -204,16 +254,22 @@ internal sealed class DirectorCreationRenderer : IRenderer
         }
         shader!.Uniform("textured", 1); shader.BindTexture2D("tex", id, 0);
     }
-    private void BindTexture(DirectorCreationProject project, string source)
+    private void BindTexture(DirectorCreationProject project, string source, IShaderProgram? target = null)
     {
-        if (source.Length == 0) { shader!.Uniform("textured", 0); return; }
+        var program = target ?? shader!;
+        if (source.Length == 0) { program.Uniform("textured", 0); return; }
+        int texture=ParticleTexture(project,source);
+        program.Uniform("textured", 1); program.BindTexture2D("tex", texture, 0);
+    }
+    internal int ParticleTexture(DirectorCreationProject project,string source,byte[]? embedded=null)
+    {
+        if(source.Length==0)return 0;
         string key = project.Id + "/" + source;
         if (!textures.TryGetValue(key, out int texture))
         {
-            if (source.StartsWith("assets/", StringComparison.Ordinal))
+            if (embedded is not null || source.StartsWith("assets/", StringComparison.Ordinal))
             {
-                string path = session.Store.AssetPath(project.Id, source);
-                using var stream = new MemoryStream(File.ReadAllBytes(path)); using var bitmap = new BitmapExternal(stream, api.Logger);
+                using var stream = new MemoryStream(embedded??File.ReadAllBytes(session.Store.AssetPath(project.Id, source))); using var bitmap = new BitmapExternal(stream, api.Logger);
                 var loaded = new LoadedTexture(api); api.Render.LoadTexture(bitmap, ref loaded); ownedTextures.Add(loaded); texture = loaded.TextureId;
             }
             else
@@ -224,7 +280,7 @@ internal sealed class DirectorCreationRenderer : IRenderer
             }
             textures[key] = texture;
         }
-        shader!.Uniform("textured", 1); shader.BindTexture2D("tex", texture, 0);
+        return texture;
     }
     private static MeshData Plane(CreationSceneObject obj)
     {
@@ -263,6 +319,8 @@ internal sealed class DirectorCreationRenderer : IRenderer
     internal static float[] Array(Matrix4x4 m) => [m.M11,m.M12,m.M13,m.M14,m.M21,m.M22,m.M23,m.M24,m.M31,m.M32,m.M33,m.M34,m.M41,m.M42,m.M43,m.M44];
     internal void ReloadTextures()
     {
+        dynamicParticles?.Dispose();dynamicParticles=null;
+        DisposeSelectionBuffers();
         foreach (var mesh in meshes.Values) mesh.Dispose(); meshes.Clear(); geometry.Clear();
         foreach (var t in ownedTextures) t.Dispose(); ownedTextures.Clear(); textures.Clear(); revision = -1;
         foreach (var mesh in nativeMeshes.Values) mesh.Dispose(); nativeMeshes.Clear();
@@ -271,6 +329,7 @@ internal sealed class DirectorCreationRenderer : IRenderer
     {
         api.Event.UnregisterRenderer(this, EnumRenderStage.AfterOIT); api.Event.ReloadShader -= ReloadShader;
         foreach (var mesh in meshes.Values) mesh.Dispose(); meshes.Clear(); ReloadTextures(); shader?.Dispose();
+        DisposeSelectionShaders(); selectionTriangle?.Dispose(); selectionTriangle = null;
         foreach (var mesh in nativeMeshes.Values) mesh.Dispose(); nativeMeshes.Clear();
     }
 }

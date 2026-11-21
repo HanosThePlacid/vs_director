@@ -2,13 +2,15 @@ namespace VSDirector.Data;
 
 public sealed partial class DirectorCreationSession
 {
-    public bool AutoKey { get; set; }
+    public bool AutoKey { get; set; } = true;
     public double AnimationTime { get; private set; }
     public Guid AnimationObject { get; private set; }
     public CreationAnimation? EditingAnimation => Project?.Animations.Find(a => a.Id == SelectedAnimation);
     public double EditTime => EditingAnimation is null ? Time : AnimationTime;
     public double EditDuration => EditingAnimation?.Duration ?? Project?.Duration ?? 0;
     public List<CreationTrack> EditTracks => EditingAnimation?.Tracks ?? Project!.Tracks;
+    public bool IsAnimationControl(Guid id) => EditingAnimation is not null
+        && Project!.Objects.Find(o => o.Id == AnimationObject)?.IkChains.Any(c => c.Target == id || c.Pole == id) == true;
     private readonly Dictionary<(Guid Object, Guid Part), HashSet<CreationChannel>> draftChannels = new();
     private readonly Dictionary<(Guid Object, Guid Part, CreationChannel Channel), CreationVector> propertyDrafts = new();
     public CreationVector PropertyValue(Guid objectId, Guid partId, CreationChannel channel, CreationVector fallback)
@@ -20,9 +22,17 @@ public sealed partial class DirectorCreationSession
     public void SetProperty(Guid objectId, Guid partId, CreationChannel channel, CreationVector value, Action setBase)
     {
         Play(false);
-        if (AutoKey) WriteKey(objectId, partId, channel, value);
-        else if (IsAnimated(objectId, partId, channel)) propertyDrafts[(objectId, partId, channel)] = value;
-        else setBase();
+        var context = EditingContext(objectId,partId,channel);
+        if (context.Target == CreationWriteTarget.Base) { setBase(); return; }
+        if (context.Target == CreationWriteTarget.Recorded) throw new InvalidOperationException("Recorded performance owns this pose time.");
+        if (PoseEditing && objectId == PoseActor && partId != Guid.Empty && channel == CreationChannel.Visible)
+        {
+            if(ScenePoseEditing && Frame?.Objects.GetValueOrDefault(PoseActor)?.HasPerformance==true)
+                throw new InvalidOperationException("Recorded performance owns this pose time.");
+            poseDraft ??= CapturePose(); if (value.X >= .5) poseDraft.Hidden.Remove(partId); else poseDraft.Hidden.Add(partId); return;
+        }
+        if (AutoKey) { SeedKey(objectId,partId,channel); WriteKey(objectId, partId, channel, value); }
+        else propertyDrafts[(objectId, partId, channel)] = value;
     }
     private Guid projectSelectedObject, projectSelectedPart;
     public void EnterAnimation(Guid animation, Guid actor)
@@ -30,14 +40,26 @@ public sealed partial class DirectorCreationSession
         if (Project?.Animations.Find(a => a.Id == animation) is not { } a || Project.Objects.Find(o => o.Id == actor)?.ModelId != a.ModelId)
             throw new InvalidOperationException("The animation and actor use different models.");
         if (EditingAnimation is null) { projectSelectedObject = SelectedObject; projectSelectedPart = SelectedPart; }
-        StopRecording(); SelectedAnimation = animation; AnimationObject = SelectedObject = actor;
+        ScenePoseActor=Guid.Empty; EditTask = CreationEditTask.Animation; StopRecording(); SelectedAnimation = animation; AnimationObject = SelectedObject = actor;
         SelectedPart = Guid.Empty; AnimationTime = 0; ClearTransformDrafts();
     }
     public void LeaveAnimation()
-    { Play(false); if (EditingAnimation is not null) { SelectedObject = projectSelectedObject; SelectedPart = projectSelectedPart; } SelectedAnimation = AnimationObject = Guid.Empty; AnimationTime = 0; ClearTransformDrafts(); }
+    { ScenePoseActor=Guid.Empty; Play(false); if (EditingAnimation is not null) { SelectedObject = projectSelectedObject; SelectedPart = projectSelectedPart; } SelectedAnimation = AnimationObject = Guid.Empty; AnimationTime = 0; ClearTransformDrafts(); }
     private CreationFrame EvaluateEditingFrame()
     {
-        var frame = DirectorCreationEvaluator.Evaluate(Project!, Time, drafts, EditingAnimation, AnimationObject, AnimationTime, propertyDrafts);
+        var evaluatedDrafts = drafts;
+        var evaluatedProperties = propertyDrafts;
+        if (poseDraft is not null)
+        {
+            evaluatedDrafts = new(drafts); evaluatedProperties = new(propertyDrafts);
+            foreach (var pair in poseDraft.Bones)
+            {
+                evaluatedDrafts[(PoseActor,pair.Key)] = pair.Value with { };
+                evaluatedProperties[(PoseActor,pair.Key,CreationChannel.Visible)] = new(poseDraft.Hidden.Contains(pair.Key)?0:1,0,0);
+            }
+            evaluatedProperties[(PoseActor,Guid.Empty,CreationChannel.IkWeight)] = default;
+        }
+        var frame = DirectorCreationEvaluator.Evaluate(Project!, Time, evaluatedDrafts, EditingAnimation, AnimationObject, AnimationTime, evaluatedProperties);
         foreach (var (key, value) in propertyDrafts)
         {
             if (!frame.Objects.TryGetValue(key.Object, out var state)) continue;
@@ -54,7 +76,7 @@ public sealed partial class DirectorCreationSession
     }
     public CreationKeyframe WriteKey(Guid objectId, Guid partId, CreationChannel channel, CreationVector value)
     {
-        Guid target = EditingAnimation is null ? objectId : Guid.Empty;
+        Guid target = EditingAnimation is null || objectId != AnimationObject ? objectId : Guid.Empty;
         var track = EditTracks.Find(t => t.ObjectId == target && t.PartId == partId && t.Channel == channel);
         if (track is null) { track = new() { ObjectId = target, PartId = partId, Channel = channel }; EditTracks.Add(track); }
         var key = DirectorCreationEdits.SetKey(track, EditTime, value);
@@ -63,14 +85,29 @@ public sealed partial class DirectorCreationSession
         { channels.Remove(channel); if (channels.Count == 0) { draftChannels.Remove((objectId, partId)); drafts.Remove((objectId, partId)); } }
         return key;
     }
+    public void RecordTransformKeys(Guid objectId,Guid partId,bool positionOnly=false)
+    {
+        if(Frame?.Objects.GetValueOrDefault(objectId) is not {} state)return;
+        // Freeze the evaluated preview before the first write refreshes it.
+        var transform=(partId==Guid.Empty?state.Transform:state.Pose.GetValueOrDefault(partId)??new()) with{};
+        CreationChannel[] channels=positionOnly?[CreationChannel.Position]:[CreationChannel.Position,CreationChannel.Rotation,CreationChannel.Scale,CreationChannel.Pivot];
+        if(channels.Any(c=>IsRecordedChannel(objectId,partId,c)))throw new InvalidOperationException("Recorded performance owns this pose time.");
+        Play(false);
+        Edit("Record preview transform",_=>
+        {
+            foreach(var channel in channels)
+            {SeedKey(objectId,partId,channel);WriteKey(objectId,partId,channel,Component(transform,channel));}
+        });
+    }
     public void CommitTransformDrafts()
     {
+        if (PoseEditing) { SavePose(); return; }
         Edit("Record preview keys", _ =>
         {
             foreach (var entry in drafts.ToArray())
                 foreach (var channel in draftChannels.GetValueOrDefault(entry.Key, new()).ToArray())
-                    WriteKey(entry.Key.Object, entry.Key.Part, channel, Component(entry.Value, channel));
-            foreach (var entry in propertyDrafts.ToArray()) WriteKey(entry.Key.Object, entry.Key.Part, entry.Key.Channel, entry.Value);
+                { SeedKey(entry.Key.Object,entry.Key.Part,channel);WriteKey(entry.Key.Object, entry.Key.Part, channel, Component(entry.Value, channel)); }
+            foreach (var entry in propertyDrafts.ToArray()) { SeedKey(entry.Key.Object,entry.Key.Part,entry.Key.Channel);WriteKey(entry.Key.Object, entry.Key.Part, entry.Key.Channel, entry.Value); }
             drafts.Clear(); draftChannels.Clear(); propertyDrafts.Clear();
         });
     }
@@ -82,22 +119,27 @@ public sealed partial class DirectorCreationSession
     }
     public void SetTransform(Guid objectId, Guid partId, CreationTransform value)
     {
+        if (PoseEditing && objectId == PoseActor && partId != Guid.Empty) { SetPosePart(partId, value); return; }
         var obj = Project?.Objects.Find(o => o.Id == objectId);
         if (obj is null) return;
         Play(false);
+        if (!AnimationEditing) { if (partId == Guid.Empty) obj.Transform = value with { }; else obj.Pose[partId] = value with { }; return; }
         var basis = partId == Guid.Empty ? obj.Transform : obj.Pose.GetValueOrDefault(partId) ?? new();
         var before = Frame?.Objects.GetValueOrDefault(objectId);
         var current = drafts.GetValueOrDefault((objectId, partId))
             ?? (partId == Guid.Empty ? before?.Transform : before?.Pose.GetValueOrDefault(partId)) ?? basis;
         var updated = basis with { };
+        if(new[]{CreationChannel.Position,CreationChannel.Rotation,CreationChannel.Scale,CreationChannel.Pivot}.Any(c=>Component(value,c)!=Component(current,c)&&IsRecordedChannel(objectId,partId,c)))
+            throw new InvalidOperationException("Recorded performance owns this pose time.");
         foreach (var channel in new[] { CreationChannel.Position, CreationChannel.Rotation, CreationChannel.Scale, CreationChannel.Pivot })
         {
             var component = Component(value, channel);
             if (component == Component(current, channel)) continue;
-            if (AutoKey) WriteKey(objectId, partId, channel, component);
+            if (IsRecordedChannel(objectId,partId,channel)) throw new InvalidOperationException("Recorded performance owns this pose time.");
+            if (AutoKey) { SeedKey(objectId,partId,channel); WriteKey(objectId, partId, channel, component); }
             else
             {
-                bool animated = IsAnimated(objectId, partId, channel);
+                bool animated = AnimationEditing;
                 if (!animated) Assign(updated, channel, component);
                 else
                 {
@@ -109,5 +151,13 @@ public sealed partial class DirectorCreationSession
         if (partId == Guid.Empty) obj.Transform = updated; else if (updated != basis) obj.Pose[partId] = updated;
         // Keep the preview's static components in sync during mixed-channel edits.
         if (draftChannels.ContainsKey((objectId, partId))) drafts[(objectId, partId)] = value with { };
+    }
+    public void PrepareCameraTransform(Guid objectId)
+    {
+        if(AnimationEditing||Project?.Objects.Find(o=>o.Id==objectId)?.Kind!=CreationObjectKind.Camera)return;
+        // A base transform is masked by absolute animation tracks. Editing the
+        // visible camera must target the current time instead of an invisible base.
+        if(new[]{CreationChannel.Position,CreationChannel.Rotation,CreationChannel.Scale,CreationChannel.Pivot}
+            .Any(c=>IsAnimated(objectId,Guid.Empty,c)))SetEditTask(CreationEditTask.Animation);
     }
 }

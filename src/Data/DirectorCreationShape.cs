@@ -6,10 +6,14 @@ namespace VSDirector.Data;
 public static class DirectorCreationShape
 {
     public static (CreationModel Model, List<CreationAnimation> Animations) Import(string json, string name)
+        => ImportCore(json, name, true);
+    public static CreationModel ImportGeometry(string json, string name) => ImportCore(json, name, false).Model;
+    private static (CreationModel Model, List<CreationAnimation> Animations) ImportCore(string json, string name, bool includeAnimations)
     {
         var root = JsonNode.Parse(json, documentOptions: new() { AllowTrailingCommas = true, CommentHandling = System.Text.Json.JsonCommentHandling.Skip }) as JsonObject
             ?? throw new InvalidDataException("模型需要 Vintage Story Shape JSON 对象。");
         if (root["elements"] is not JsonArray elements) throw new InvalidDataException("模型缺少 elements。");
+        if (!includeAnimations) root.Remove("animations");
         var model = new CreationModel { Name = name, TextureWidth = (int)N(root, "textureWidth", 16), TextureHeight = (int)N(root, "textureHeight", 16), Extra = (JsonObject)root.DeepClone() };
         foreach (string field in new[] { "elements", "animations", "textures", "textureWidth", "textureHeight" }) model.Extra.Remove(field);
         if (root["textures"] is JsonObject textures)
@@ -60,16 +64,28 @@ public static class DirectorCreationShape
                     {
                         if (!new[] { "X", "Y", "Z" }.Any(axis => values.ContainsKey(prefix + axis))) return;
                         var track = animation.Tracks.Find(t => t.PartId == part.Id && t.Channel == channel);
-                        if (track is null) { track = new() { PartId = part.Id, Channel = channel }; animation.Tracks.Add(track); }
+                        if (track is null) { track = new() { PartId = part.Id, Channel = channel, ShortestRotation = false }; animation.Tracks.Add(track); }
                         DirectorCreationEdits.SetKey(track, time, new CreationVector(N(values, prefix + "X", fallback), N(values, prefix + "Y", fallback), N(values, prefix + "Z", fallback)) * factor);
                     }
                 }
             }
+        // Native animation frames interpolate across the end/start boundary.
+        // Explicit boundary keys preserve this when editing on a linear timeline.
+        foreach (var track in animation.Tracks.Where(t => t.Keys.Count > 1))
+        {
+            var first = track.Keys.MinBy(k => k.Time)!; var last = track.Keys.MaxBy(k => k.Time)!;
+            double gap = animation.Duration - last.Time + first.Time;
+            if (gap <= 0) continue;
+            var boundary = last.Value + (first.Value - last.Value) * ((animation.Duration - last.Time) / gap);
+            if (first.Time > 0) DirectorCreationEdits.SetKey(track, 0, boundary);
+            if (last.Time < animation.Duration) DirectorCreationEdits.SetKey(track, animation.Duration, boundary);
+        }
         return animation;
     }
 
     public static JsonObject Export(CreationModel model, IEnumerable<CreationAnimation>? animations = null, CreationVector offset = default)
     {
+        if(model.RigEditing.Seams.Count>0) throw new InvalidDataException("Native Shape export cannot preserve joint seams. Export video or disable joint seams first.");
         var root = (JsonObject)model.Extra.DeepClone();
         root["textureWidth"] = model.TextureWidth; root["textureHeight"] = model.TextureHeight;
         var textures = new JsonObject(); foreach (var t in model.Textures) textures[t.Key] = t.Value; root["textures"] = textures;
@@ -99,6 +115,10 @@ public static class DirectorCreationShape
 
     public static JsonObject ExportAnimation(CreationAnimation animation, CreationModel model)
     {
+        if(model.RigEditing.Seams.Count>0) throw new InvalidDataException("Native Shape export cannot preserve joint seams. Export video or disable joint seams first.");
+        if (animation.Tracks.Any(t => t.ObjectId != Guid.Empty)) throw new InvalidDataException("Bake IK controls to bone keys before exporting this animation.");
+        if (animation.Tracks.Any(t => t.Enabled && t.Channel == CreationChannel.Visible && t.Keys.Any(k => k.Value.X < .5)))
+            throw new InvalidDataException("Native animation export does not support visibility keys. Keep this animation in the creation project or export video.");
         var node = (JsonObject)animation.Extra.DeepClone(); node["name"] = animation.Name;
         node["code"] ??= animation.Name.ToLowerInvariant().Replace(' ', '-');
         node["version"] = model.AnimationVersion; node["quantityframes"] = Math.Max(1, (int)Math.Ceiling(animation.Duration * 30));
@@ -119,6 +139,19 @@ public static class DirectorCreationShape
                     var value = DirectorCreationEvaluator.Sample(track, frame / 30d, track.Channel == CreationChannel.Scale ? CreationVector.One : default);
                     if (track.Channel == CreationChannel.Position) value *= 16;
                     values[prefix + "X"] = value.X; values[prefix + "Y"] = value.Y; values[prefix + "Z"] = value.Z;
+                }
+                var pivotTrack = tracks.LastOrDefault(t => t.Channel == CreationChannel.Pivot);
+                var pivot = pivotTrack is null ? default : DirectorCreationEvaluator.Sample(pivotTrack, frame / 30d, default);
+                if (pivot != default)
+                {
+                    // Native animation has no pivot channel: bake its contribution
+                    // into translation using the native v0/v1 transform order.
+                    var pose = new CreationTransform { Pivot = pivot,
+                        Position = new CreationVector(N(values, "offsetX"), N(values, "offsetY"), N(values, "offsetZ")) * (1d / 16),
+                        Rotation = new(N(values, "rotationX"), N(values, "rotationY"), N(values, "rotationZ")),
+                        Scale = new(N(values, "stretchX", 1), N(values, "stretchY", 1), N(values, "stretchZ", 1)) };
+                    var baked = DirectorCreationMath.PoseFromMatrix(part, DirectorCreationMath.BoneMatrix(part, pose, model.AnimationVersion), pose with { Pivot = default }, model.AnimationVersion);
+                    values["offsetX"] = baked.Position.X * 16; values["offsetY"] = baked.Position.Y * 16; values["offsetZ"] = baked.Position.Z * 16;
                 }
                 elements[part.Name] = values;
             }
@@ -143,7 +176,7 @@ public static class DirectorCreationShape
     }
 
     public static double Number(JsonNode? node, double fallback = 0)
-        => node is JsonValue && double.TryParse(node.ToJsonString(), System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out double n) && double.IsFinite(n) ? n : fallback;
+        => node is JsonValue && double.TryParse(node.ToString(), System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out double n) && double.IsFinite(n) ? n : fallback;
     public static double N(JsonObject obj, string key, double fallback = 0) => Number(obj[key], fallback);
     public static string S(JsonObject obj, string key, string fallback = "") => obj[key] is JsonValue v && v.TryGetValue<string>(out var s) ? s : fallback;
     public static CreationVector V(JsonNode? node) => node is JsonArray a && a.Count >= 3 ? new(Number(a[0]), Number(a[1]), Number(a[2])) : default;

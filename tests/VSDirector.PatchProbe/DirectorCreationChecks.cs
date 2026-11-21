@@ -15,36 +15,55 @@ internal static partial class DirectorImGuiProbe
     {
         CheckActorTextures(assembly);
         CheckNativeActors();
+        CheckCreationRigMatrices();
+        CheckRigEditingWorkflow(assembly, api);
+        CheckRigViewportMapping(assembly, api);
         CheckCreationClipboard(assembly);
         CheckCreationActorVisibility(assembly);
         CheckPerformanceInput(assembly);
+        CheckCreationExport(assembly);
+        CheckCreationCalendar(assembly);
+        CheckPerformanceEditing(assembly, api);
+        DirectorActorEquipmentChecks.Run();
+        CheckActorDialog(assembly);
+        CheckCreationWorldIsolation(assembly);
         string directory = Path.Combine(Path.GetTempPath(), "vsdirector-creation-probe-" + Guid.NewGuid().ToString("N"));
         var session = new DirectorCreationSession(new(directory));
         var part = new CreationPart { Name = "头部", To = new(16, 16, 16) };
         var model = new CreationModel { Name = "测试演员", Parts = [part] };
         var actor = new CreationSceneObject { Name = "演员一", ModelId = model.Id };
         var camera = new CreationSceneObject { Name = "拍摄相机", Kind = CreationObjectKind.Camera };
-        var project = new DirectorCreationProject { Name = "双演员动画", Models = [model], Objects = [actor, camera], CameraId = camera.Id };
+        var project = new DirectorCreationProject { WorldId = "probe-world", Name = "双演员动画", Models = [model], Objects = [actor, camera], CameraId = camera.Id };
         DirectorCreationEdits.SetKey(project, actor.Id, part.Id, CreationChannel.Rotation, 0, default);
         DirectorCreationEdits.SetKey(project, actor.Id, part.Id, CreationChannel.Rotation, 2, new(0, 60, 0));
         session.Open(project); session.SelectedObject = actor.Id;
         Type R(string name) => assembly.GetType(name, true)!;
         var runtime = RuntimeHelpers.GetUninitializedObject(R("VSDirector.Runtime.DirectorCreationRuntime"));
         var objectRenderer = RuntimeHelpers.GetUninitializedObject(R("VSDirector.Rendering.DirectorCreationRenderer"));
+        AccessTools.Field(runtime.GetType(), "api").SetValue(runtime, CreationScopeApi());
         AccessTools.Field(runtime.GetType(), "<Session>k__BackingField").SetValue(runtime, session);
+        AccessTools.Field(runtime.GetType(), "<ParticleOverrides>k__BackingField").SetValue(runtime, Activator.CreateInstance(R("VSDirector.Runtime.DirectorCreationParticleOverrides"),true));
         AccessTools.Field(runtime.GetType(), "<Renderer>k__BackingField").SetValue(runtime, objectRenderer);
         AccessTools.Field(runtime.GetType(), "<Status>k__BackingField").SetValue(runtime, "");
         AccessTools.Field(objectRenderer.GetType(), "<Error>k__BackingField").SetValue(objectRenderer, "");
         var owner = new VSDirectorModSystem(); AccessTools.Field(owner.GetType(), "creation").SetValue(owner, runtime);
+        AccessTools.Field(runtime.GetType(), "owner").SetValue(runtime, owner);
         var host = Activator.CreateInstance(R("VSDirector.Gui.DirectorImGuiWorkspace"), api)!;
         var workspace = Activator.CreateInstance(R("VSDirector.Gui.DirectorCreationWorkspace"), BindingFlags.Instance | BindingFlags.NonPublic, null, [api, owner, host], null)!;
         var io = ImGui.GetIO(); Vector2 display = io.DisplaySize; io.DisplaySize = new(960, 640);
         string locale = Lang.CurrentLocale;
         try
         {
+            CheckCreationWorkflow(workspace,session);
+            CheckCreationPreferences(workspace,session);
+            CheckProjectionEditor(workspace,session,runtime);
+            CheckContentNavigation(workspace,session,capture);
             foreach (string language in new[] { "zh-cn", "en" })
             {
             LoadCreationProbeLanguage(language);
+            foreach (var displayMode in Enum.GetValues<CreationTimeDisplay>())
+            {
+            project.TimeDisplay = displayMode;
             foreach (float width in new[] { 220f, 320f, 520f })
             {
                 for (int frame = 0; frame < 3; frame++)
@@ -66,7 +85,7 @@ internal static partial class DirectorImGuiProbe
                                 ImGui.PushID(Lang.Get("vsdirector:replay-visual-group-" + key));
                                 ImGui.GetStateStorage().SetBool(ImGui.GetID("###header"), true); ImGui.PopID();
                             }
-                        AccessTools.Method(workspace.GetType(), method).Invoke(workspace, null);
+                        AccessTools.Method(workspace.GetType(), method).Invoke(workspace, method == "DrawProjectSettings" ? [true] : null);
                         // ImGui derives scrollbar widths from the previous frame's content size.
                         if (frame == 2 && ImGui.GetScrollMaxX() > 1) throw new Exception("Creation panel content overflowed horizontally: " + name + " width=" + width + " overflow=" + ImGui.GetScrollMaxX());
                         ImGui.End();
@@ -74,20 +93,25 @@ internal static partial class DirectorImGuiProbe
                     Panel("creation-browser-probe", new(0, 0), new(width, 380), "DrawBrowser");
                     Panel("creation-properties-probe", new(width, 0), new(width, 380), "DrawProperties");
                     Panel("creation-view-probe", new(width, 0), new(width, 380), "DrawView");
+                    Panel("creation-bones-probe", new(width, 0), new(width, 380), "DrawBonesPanel");
+                    Panel("creation-ik-probe", new(width, 0), new(width, 380), "DrawIkPanel");
+                    Panel("creation-actions-probe", new(width, 0), new(width, 380), "DrawActionsPanel");
+                    Panel("creation-output-probe", new(width, 0), new(width, 380), "DrawProjectSettings");
                     Panel("creation-timeline-probe", new(0, 380), new(960, 260), "DrawTimeline");
                     ImGui.Render();
                 }
                 if (ImGui.GetDrawData().TotalVtxCount < 100) throw new Exception("Creation panels produced no real ImGui geometry.");
-                capture("creation-" + language + "-" + width);
+                capture("creation-" + language + "-" + displayMode + "-" + width);
             }
             Console.WriteLine("PASS creation browser, transform inspector and timeline in real ImGui at 220/320/520px");
             var particle = new CreationSceneObject { Kind = CreationObjectKind.Particle };
             var clip = new CreationClip { Name = "测试剪辑", Duration = 2 };
             project.Objects.Add(particle); project.Clips.Add(clip); session.Changed();
             foreach (float width in new[] { 220f, 320f, 520f })
-            foreach (string mode in new[] { "model", "particle", "clip", "key" })
+            foreach (string mode in new[] { "model", "particle", "advanced-particle", "clip", "key" })
             {
-                session.SelectedObject = mode == "particle" ? particle.Id : actor.Id;
+                particle.ParticleEffect=mode=="advanced-particle"?new():null;
+                session.SelectedObject = mode is "particle" or "advanced-particle" ? particle.Id : actor.Id;
                 session.SelectedPart = mode == "model" ? part.Id : Guid.Empty;
                 AccessTools.Field(workspace.GetType(), "clipId").SetValue(workspace, mode == "clip" ? clip.Id : Guid.Empty);
                 AccessTools.Field(workspace.GetType(), "trackId").SetValue(workspace, project.Tracks[0].Id);
@@ -96,7 +120,7 @@ internal static partial class DirectorImGuiProbe
                 {
                     ImGui.NewFrame(); ImGui.SetNextWindowPos(Vector2.Zero); ImGui.SetNextWindowSize(new(width, 600));
                     ImGui.Begin("creation-detail-probe", ImGuiWindowFlags.NoSavedSettings | ImGuiWindowFlags.NoResize);
-                    string method = mode == "model" ? "DrawModelProperties" : mode == "particle" ? "DrawObjectProperties" : "DrawTimeline";
+                    string method = mode == "model" ? "DrawModelProperties" : mode is "particle" or "advanced-particle" ? "DrawParticlePanel" : "DrawTimeline";
                     AccessTools.Method(workspace.GetType(), method).Invoke(workspace, null);
                     if (frame == 2 && ImGui.GetScrollMaxX() > 1) throw new Exception($"Creation {mode} overflowed at width {width}: {ImGui.GetScrollMaxX()}");
                     ImGui.End(); ImGui.Render();
@@ -104,20 +128,53 @@ internal static partial class DirectorImGuiProbe
             }
             Console.WriteLine("PASS " + language + " creation model/particle inspectors and selected clip/key timeline at 220/320/520px");
             }
+            }
+            project.TimeDisplay = CreationTimeDisplay.Frames;
+            CheckAdvancedParticleParameters(workspace,session);
+            CheckParticlePicker(workspace,runtime,session,capture);
+            CheckFullscreenResourcePickers(workspace,runtime,session,capture);
             LoadCreationProbeLanguage("zh-cn");
             session.SelectedObject = actor.Id; session.SelectedPart = part.Id;
             AccessTools.Field(workspace.GetType(), "keyId").SetValue(workspace, Guid.Empty);
             AccessTools.Field(workspace.GetType(), "clipId").SetValue(workspace, Guid.Empty);
             Vector2 timelineOrigin = default;
+            List<(Vector2 Position, uint Color)> timelineHeader = [], timelineRows = [];
             void TimelineFrame()
             {
                 ImGui.NewFrame(); ImGui.SetNextWindowPos(Vector2.Zero); ImGui.SetNextWindowSize(new(960, 500));
                 ImGui.Begin("creation-interaction", ImGuiWindowFlags.NoSavedSettings);
-                timelineOrigin = ImGui.GetCursorScreenPos();
                 AccessTools.Method(workspace.GetType(), "DrawTimeline").Invoke(workspace, null);
+                timelineOrigin = (Vector2)AccessTools.Field(workspace.GetType(), "timelineHeaderPosition").GetValue(workspace)!;
+                var headerVertices = ImGui.GetWindowDrawList().VtxBuffer;
+                timelineHeader = Enumerable.Range(0, headerVertices.Size).Select(i => (headerVertices[i].pos, headerVertices[i].col)).ToList();
+                ImGui.BeginChild("timeline-rows");
+                var rowVertices = ImGui.GetWindowDrawList().VtxBuffer;
+                timelineRows = Enumerable.Range(0, rowVertices.Size).Select(i => (rowVertices[i].pos, rowVertices[i].col)).ToList();
+                ImGui.EndChild();
                 ImGui.End(); ImGui.Render();
             }
             TimelineFrame(); TimelineFrame();
+            foreach (int fps in new[] { 24, 30, 60, 120 })
+            {
+                project.Output.Fps = fps;
+                io.KeyAlt = false;
+                double snapped = (double)AccessTools.Method(workspace.GetType(), "Snap").Invoke(workspace, [.049])!;
+                if (Math.Abs(snapped - 1d / 30) > 1e-8) throw new Exception("Creation pointer snap followed export FPS");
+                io.KeyAlt = true;
+                double fine = (double)AccessTools.Method(workspace.GetType(), "Snap").Invoke(workspace, [.049])!;
+                if (Math.Abs(fine - .049) > 1e-8) throw new Exception("Creation Alt bypass lost subframe editing");
+                io.KeyAlt = false;
+                session.Seek(1);
+                float scale = (float)AccessTools.Property(R("VSDirector.Gui.DirectorImGuiTheme"), "Scale").GetValue(null)!;
+                io.MousePos = timelineOrigin + new Vector2(104 * scale, 14 * scale);
+                TimelineFrame(); TimelineFrame(); io.MouseDown[0] = true; TimelineFrame(); io.MouseDown[0] = false; TimelineFrame();
+                if (Math.Abs(session.Time - 31d / 30) > 1e-8) throw new Exception("Creation transport next frame followed export FPS or missed its button");
+                io.MousePos = timelineOrigin + new Vector2(44 * scale, 14 * scale);
+                TimelineFrame(); TimelineFrame(); io.MouseDown[0] = true; TimelineFrame(); io.MouseDown[0] = false; TimelineFrame();
+                if (Math.Abs(session.Time - 1) > 1e-8) throw new Exception("Creation transport previous frame followed export FPS or missed its button");
+            }
+            project.Output.Fps = 30;
+            Console.WriteLine("PASS real creation transport and pointer snap at 24/30/60/120 export FPS, with Alt subframe bypass");
             foreach (float x in new[] { 80f, 600f })
             {
                 io.MousePos = timelineOrigin + new Vector2(x, 100); TimelineFrame(); TimelineFrame();
@@ -137,6 +194,59 @@ internal static partial class DirectorImGuiProbe
             AccessTools.Field(workspace.GetType(), "timelineEditor").SetValue(workspace, false);
             TimelineFrame(); TimelineFrame(); capture("creation-timeline-controls");
             Console.WriteLine("PASS real Ctrl+wheel zoom below fit from labels and content, reversible zoom and floating key editor");
+
+            AccessTools.Field(workspace.GetType(), "keyId").SetValue(workspace, Guid.Empty);
+            TimelineFrame();
+            var glyphs = timelineRows.Where(v => v.Color == 0xffe6e0de).ToArray();
+            float rightmost = glyphs.Max(v => v.Position.X);
+            var lastKey = glyphs.Where(v => v.Position.X > rightmost - 26).ToArray();
+            Vector2 keyCenter = (new Vector2(lastKey.Min(v => v.Position.X), lastKey.Min(v => v.Position.Y))
+                + new Vector2(lastKey.Max(v => v.Position.X), lastKey.Max(v => v.Position.Y))) / 2;
+            io.MousePos = keyCenter; TimelineFrame(); TimelineFrame();
+            io.MouseDown[0] = true; TimelineFrame();
+            io.MousePos += new Vector2(65, 0); TimelineFrame();
+            double dragOriginal = (double)AccessTools.Field(workspace.GetType(), "timelineDragOrigin").GetValue(workspace)!;
+            double dragTarget = (double)AccessTools.Field(workspace.GetType(), "timelineDragTarget").GetValue(workspace)!;
+            if (Math.Abs(dragOriginal - 2) > 1e-6 || dragTarget <= dragOriginal
+                || !timelineRows.Any(v => v.Color == 0xff181818 && v.Position.Y > 450)
+                || timelineHeader.Any(v => v.Color == 0xff181818)
+                || !timelineRows.Any(v => v.Color == 0xff55d9ff) || !timelineRows.Any(v => v.Color == 0x88000000))
+                throw new Exception("Creation key pointer drag did not show inline time and original/destination guides");
+            capture("creation-key-drag-feedback");
+            project.TimeDisplay = CreationTimeDisplay.Time; TimelineFrame();
+            string label = (string)AccessTools.Method(workspace.GetType(), "FormatTime").Invoke(workspace, [dragTarget])!;
+            if (!label.EndsWith(" " + Lang.Get("vsdirector:creation-unit-seconds"))) throw new Exception("Creation drag feedback ignored seconds display mode");
+            io.MouseDown[0] = false; TimelineFrame();
+            if (timelineRows.Any(v => v.Color is 0xff55d9ff or 0x88000000)) throw new Exception("Creation key drag left stale guide lines");
+            session.Undo(); project = session.Project!;
+            if (project.Tracks[0].Keys.All(k => Math.Abs(k.Time - 2) > 1e-6)) throw new Exception("Creation key drag feedback broke undo");
+            project.TimeDisplay = CreationTimeDisplay.Frames;
+            io.MousePos = timelineOrigin + new Vector2(530, 12); TimelineFrame(); TimelineFrame();
+            io.MouseDown[0] = true; TimelineFrame();
+            double initialScrub = session.Time;
+            io.MousePos += new Vector2(65, 0); TimelineFrame();
+            if (session.Time <= initialScrub || !timelineRows.Any(v => v.Color == 0xff181818 && v.Position.Y > 450))
+                throw new Exception("Creation ruler scrubbing lost inline time label or seeking");
+            io.MouseDown[0] = false; TimelineFrame();
+            Console.WriteLine("PASS real creation key drag original/destination guides, frame/seconds label, undo, ruler scrubbing and release cleanup");
+            AccessTools.Field(workspace.GetType(), "timelineCurves").SetValue(workspace,true);
+            AccessTools.Field(workspace.GetType(), "curveAxis").SetValue(workspace,1);
+            AccessTools.Field(workspace.GetType(), "keyId").SetValue(workspace,Guid.Empty);
+            ((HashSet<Guid>)AccessTools.Field(workspace.GetType(), "selectedTimelineKeys").GetValue(workspace)!).Clear();
+            TimelineFrame();TimelineFrame();
+            var curveGlyphs=timelineRows.Where(v=>v.Color==0xffe6e0de).ToArray();
+            float curveRight=curveGlyphs.Max(v=>v.Position.X);
+            var curveKey=curveGlyphs.Where(v=>v.Position.X>curveRight-26).ToArray();
+            io.MousePos=(new Vector2(curveKey.Min(v=>v.Position.X),curveKey.Min(v=>v.Position.Y))+new Vector2(curveKey.Max(v=>v.Position.X),curveKey.Max(v=>v.Position.Y)))/2;
+            TimelineFrame();TimelineFrame();io.MouseDown[0]=true;TimelineFrame();io.MousePos+=new Vector2(24,24);TimelineFrame();
+            if(project.Tracks[0].Keys.Last().Time<=2||project.Tracks[0].Keys.Last().Value.Y>=60)
+                throw new Exception("Real curve key drag failed to change both time and value");
+            capture("creation-curve-drag");
+            io.MouseDown[0]=false;TimelineFrame();session.Undo();project=session.Project!;
+            if(project.Tracks[0].Keys.Last().Time!=2||project.Tracks[0].Keys.Last().Value.Y!=60)
+                throw new Exception("Curve time/value edit did not undo atomically");
+            AccessTools.Field(workspace.GetType(), "timelineCurves").SetValue(workspace,false);
+            Console.WriteLine("PASS real curve XY pointer drag edits time/value together and restores both with one undo");
             project.Tracks.Clear(); project.Objects.Clear(); project.Objects.Add(actor); project.Clips.Clear();
             var draggable = new CreationClip { ObjectId = actor.Id, Name = "剪辑1", Start = 1, Duration = 2 };
             project.Clips.Add(draggable); session.SelectedPart = Guid.Empty; session.ClearTransformDrafts(); session.Changed();
@@ -172,10 +282,42 @@ internal static partial class DirectorImGuiProbe
             AccessTools.Field(workspace.GetType(), "timelineEditor").SetValue(workspace, false);
             TimelineFrame();
             Console.WriteLine("PASS real clip first-click drag, undo/redo and right-click editor");
+            project=session.Project!;project.Clips.Clear();project.Objects.Clear();project.CameraId=Guid.Empty;
+            var particleBar=new CreationSceneObject{Kind=CreationObjectKind.Particle,ParticleEffect=new(),ParticleStart=1,ParticleDuration=2};
+            project.Objects.Add(particleBar);session.SelectedObject=particleBar.Id;session.SelectedPart=Guid.Empty;session.Changed();
+            AccessTools.Field(workspace.GetType(),"timelineZoom").SetValue(workspace,1d);
+            AccessTools.Field(workspace.GetType(),"timelineStart").SetValue(workspace,0d);
+            Vector2 ParticleBarPoint(int edge)
+            {
+                TimelineFrame();TimelineFrame();
+                var points=timelineRows.Where(v=>v.Color==0xff927c42).Select(v=>v.Position).ToArray();
+                if(points.Length==0)throw new Exception("Particle emission bar did not draw");
+                var lo=points.Aggregate(Vector2.Min);var hi=points.Aggregate(Vector2.Max);
+                return new(edge<0?lo.X+1:edge>0?hi.X-1:(lo.X+hi.X)/2,(lo.Y+hi.Y)/2);
+            }
+            foreach(int edge in new[]{-1,0,1})
+            {
+                particleBar=session.Project!.Objects.Single();particleBar.ParticleStart=1;particleBar.ParticleDuration=2;session.Changed();
+                io.MousePos=ParticleBarPoint(edge);TimelineFrame();TimelineFrame();io.MouseDown[0]=true;TimelineFrame();
+                if((Guid)AccessTools.Field(workspace.GetType(),"draggedParticle").GetValue(workspace)! != particleBar.Id)throw new Exception($"Particle bar click did not begin a gesture: edge={edge}, mouse={io.MousePos}, draft={session.HasTransformDraft}");
+                io.MousePos+=new Vector2(29,0);TimelineFrame();io.MouseDown[0]=false;TimelineFrame();
+                double start=particleBar.ParticleStart,length=particleBar.ParticleDuration;
+                if(edge<0&&Math.Abs(start+length-3)>1e-8||edge==0&&length!=2||edge>0&&start!=1
+                    ||(edge<=0?start<=1:length<=2)||Math.Abs(start*30-Math.Round(start*30))>1e-7||Math.Abs(length*30-Math.Round(length*30))>1e-7)
+                    throw new Exception("Particle emission drag changed the wrong boundary or ignored frame snapping: "+edge);
+                session.Undo();if(session.Project!.Objects.Single().ParticleStart!=1||session.Project.Objects.Single().ParticleDuration!=2)throw new Exception("Particle bar did not undo atomically");
+                session.Redo();if(session.Project!.Objects.Single().ParticleStart!=start||session.Project.Objects.Single().ParticleDuration!=length)throw new Exception("Particle bar redo failed");
+            }
+            particleBar=session.Project!.Objects.Single();double beforeCancel=particleBar.ParticleStart;
+            io.MousePos=ParticleBarPoint(0);TimelineFrame();TimelineFrame();io.MouseDown[0]=true;TimelineFrame();io.MousePos+=new Vector2(29,0);TimelineFrame();
+            AccessTools.Method(workspace.GetType(),"RequestEscape").Invoke(workspace,null);io.MouseDown[0]=false;TimelineFrame();
+            if(session.Project!.Objects.Single().ParticleStart!=beforeCancel||(Guid)AccessTools.Field(workspace.GetType(),"draggedParticle").GetValue(workspace)! != Guid.Empty)throw new Exception("Escape failed to cancel the particle timeline gesture");
+            Console.WriteLine("PASS particle emission bar body/left/right pointer drags, frame snapping, undo/redo and Escape cancellation");
         }
         finally { Lang.ChangeLanguage(locale); io.DisplaySize = display; ((IDisposable)host).Dispose(); if (Directory.Exists(directory)) Directory.Delete(directory, true); }
         CheckCreationProjectLifecycle(assembly, api, capture);
         CheckCreationShaderAndState(assembly);
+        CheckCreationSelectionContour(assembly);
     }
     private static void CheckPerformanceInput(Assembly assembly)
     {
@@ -213,6 +355,28 @@ internal static partial class DirectorImGuiProbe
             var project = new DirectorCreationProject { Models = [imported.Model], Objects = [actor], Animations = imported.Animations };
             project.Validate();
             if (!DirectorCreationIk.SuggestChains(imported.Model).Any()) throw new Exception("Native limb discovery failed: " + relative);
+            if(relative.Contains("seraph")&&DirectorCreationIk.SuggestChains(imported.Model).Count()!=4)throw new Exception("Player posing must expose four limbs, not clothing and hand anchors");
+            var rest = DirectorCreationEvaluator.Evaluate(project, 0).Objects[actor.Id];
+            foreach (var pair in DirectorCreationIk.SuggestChains(imported.Model))
+            {
+                var controls = DirectorCreationIk.CreateControls(actor, imported.Model, rest, pair.Upper, pair.Lower);
+                project.Objects.Add(controls.Target); project.Objects.Add(controls.Pole); actor.IkChains.Add(controls.Chain);
+            }
+            var rigged = DirectorCreationEvaluator.Evaluate(project, 0).Objects[actor.Id];
+            foreach (var chain in actor.IkChains)
+            {
+                var end = Vector3.Transform(chain.EndOffset.Float(), rigged.Bones[chain.Lower] * rigged.World);
+                var target = project.Objects.First(o => o.Id == chain.Target).Transform.Position.Float();
+                if (Vector3.Distance(end, target) > .005f) throw new Exception("Creating native IK moved its end effector: " + relative + " / " + chain.Name);
+            }
+            actor.IkChains.Clear();
+            foreach (var pair in DirectorCreationIk.SuggestChains(imported.Model))
+            {
+                var endPart = pair.Lower;
+                var centre = Vector3.Transform(((endPart.To-endPart.From)*(1d/32)).Float(),rest.Bones[endPart.Id]);
+                var result = DirectorCreationPoseGeometry.Pull(imported.Model,rest,endPart.Id,centre+new Vector3(.025f,.015f,.02f));
+                if (result.Values.Any(t => !t.Rotation.Finite() || !t.Position.Finite())) throw new Exception("Native actor direct pose pull produced invalid values: " + relative);
+            }
             foreach (var animation in imported.Animations)
             {
                 var frame = DirectorCreationEvaluator.Evaluate(project, 0, editingAction: animation, actionActor: actor.Id, actionTime: animation.Duration / 2);
@@ -332,6 +496,7 @@ internal static partial class DirectorImGuiProbe
         });
         var viewportApi = ProbeDispatchProxy.Create<ICoreClientAPI>((m, _) => m.Name == "get_Render" ? render : ProbeDispatchProxy.DefaultValue(m.ReturnType));
         var runtime = RuntimeHelpers.GetUninitializedObject(R("VSDirector.Runtime.DirectorCreationRuntime"));
+        AccessTools.Field(runtime.GetType(), "api").SetValue(runtime, CreationScopeApi());
         var renderer = RuntimeHelpers.GetUninitializedObject(R("VSDirector.Rendering.DirectorCreationRenderer"));
         AccessTools.Field(runtime.GetType(), "<Session>k__BackingField").SetValue(runtime, session);
         AccessTools.Field(runtime.GetType(), "<Renderer>k__BackingField").SetValue(runtime, renderer);
@@ -346,7 +511,7 @@ internal static partial class DirectorImGuiProbe
         AccessTools.Field(workspace.GetType(), "<Active>k__BackingField").SetValue(workspace, true);
         var io = ImGui.GetIO(); Vector2 display = io.DisplaySize; io.DisplaySize = new(1280, 800);
         string locale = Lang.CurrentLocale;
-        var panelTitles = new[] { "###vsdirector-creation-browser", "###vsdirector-creation-properties", "###vsdirector-creation-timeline" };
+        var panelTitles = new[] { "###vsdirector-creation-browser", "###vsdirector-creation-content", "###vsdirector-creation-properties", "###vsdirector-creation-timeline" };
         void Frame(bool inspect = false)
         {
             ImGui.NewFrame();
@@ -360,7 +525,7 @@ internal static partial class DirectorImGuiProbe
                         bool visible = ImGui.Begin(title);
                         try
                         {
-                            if ((!visible && title != "###vsdirector-creation-properties") || ImGui.GetWindowDockID() == 0 || ImGui.GetWindowSize().X < 100)
+                            if (!visible || ImGui.GetWindowDockID() == 0 || ImGui.GetWindowSize().X < 100)
                                 throw new Exception("New/open project panel is hidden or undocked: " + title);
                             float expectedFont = ImGui.GetFont().FontSize * (float)GuiElement.scaled(1) * io.FontGlobalScale;
                             if (Math.Abs(ImGui.GetFontSize() - expectedFont) > .1f)
@@ -383,12 +548,27 @@ internal static partial class DirectorImGuiProbe
             foreach (string language in new[] { "zh-cn", "en" })
             {
                 LoadCreationProbeLanguage(language);
-                // Closing every creation panel must not carry over into a new/open project.
+                // Opening documents preserves panel preferences; the Window menu reopens them.
                 foreach (string field in new[] { "browser", "properties", "timeline" }) AccessTools.Field(workspace.GetType(), field).SetValue(workspace, false);
                 var camera = new CreationSceneObject { Name = "Camera", Kind = CreationObjectKind.Camera };
-                var project = new DirectorCreationProject { Name = "New project", Objects = [camera], CameraId = camera.Id };
+                var project = new DirectorCreationProject { WorldId = "probe-world", Name = "New project", Objects = [camera], CameraId = camera.Id };
                 session.Open(project);
+                Frame();
+                foreach (string field in new[] { "browser", "properties", "timeline" })
+                {
+                    if((bool)AccessTools.Field(workspace.GetType(),field).GetValue(workspace)!)throw new Exception("Opening a document reopened a closed panel: "+field);
+                    AccessTools.Field(workspace.GetType(),field).SetValue(workspace,true);
+                }
                 Frame(); Frame(true); Frame(true);
+                bool toolbarSurface = false;
+                var drawData = ImGui.GetDrawData();
+                for (int list = 0; list < drawData.CmdListsCount; list++)
+                {
+                    var vertices = drawData.CmdLists[list].VtxBuffer;
+                    for (int vertex = 0; vertex < vertices.Size; vertex++)
+                        if (vertices[vertex].col == 0xff242424 && vertices[vertex].pos.Y <= 40) toolbarSurface = true;
+                }
+                if (!toolbarSurface) throw new Exception("Creation toolbar does not match the legacy RGB 36 backdrop");
                 if (session.SelectedObject != camera.Id) throw new Exception("New project did not select its shooting camera.");
                 if (((string)AccessTools.Field(workspace.GetType(), "error").GetValue(workspace)!).Length > 0)
                     throw new Exception("Creation full draw failed: " + AccessTools.Field(workspace.GetType(), "error").GetValue(workspace));
@@ -408,20 +588,81 @@ internal static partial class DirectorImGuiProbe
             }
             finally { RuntimeEnv.GUIScale = savedScale; }
             Frame();
-            Console.WriteLine("PASS creation panel fonts match legacy scaling at 100/150/200%");
+            uint objectDock=(uint)AccessTools.Property(host.GetType(),"LeftDockId").GetValue(host)!;
+            uint contentDock=(uint)AccessTools.Property(host.GetType(),"CreationContentDockId").GetValue(host)!;
+            uint inspectorDock=(uint)AccessTools.Property(host.GetType(),"InspectorDockId").GetValue(host)!;
+            if(contentDock==0||contentDock==objectDock||contentDock==inspectorDock)throw new Exception("Content must have its own dock below Objects");
+            Console.WriteLine("PASS independent Objects/Content/Properties docks and creation fonts at 100/150/200%");
             Frame();
             ImGui.NewFrame(); Call(host, "Draw", 1f / 60);
             ImGui.Begin("###vsdirector-creation-view");
             uint viewDock = ImGui.GetWindowDockID(); ImGui.End();
             ImGui.Begin("###vsdirector-creation-properties");
             uint propertiesDock = ImGui.GetWindowDockID(); ImGui.End(); ImGui.Render();
-            if (viewDock == 0 || viewDock != propertiesDock) throw new Exception("Creation View is not a right-side tab beside properties");
+            if (viewDock != 0) throw new Exception("Optional View must initially float instead of stacking with Properties");
             AccessTools.Field(workspace.GetType(), "view").SetValue(workspace, false); Frame(); Frame();
             AccessTools.Field(workspace.GetType(), "view").SetValue(workspace, true); Frame(); Frame();
             ImGui.NewFrame(); Call(host, "Draw", 1f / 60); ImGui.Begin("###vsdirector-creation-view");
-            if (ImGui.GetWindowDockID() != propertiesDock) throw new Exception("Reopening View changed its dock");
+            if (ImGui.GetWindowDockID() != viewDock) throw new Exception("Reopening View changed its placement");
             ImGui.End(); ImGui.Render();
+            // A checked window can be behind another dock tab. Opening its menu item
+            // must activate the window, not merely set the already-true flag again.
+            foreach(string panel in new[]{"view","properties"})
+            {
+                Call(workspace,"ShowCreationPanel",panel);Frame();Frame();
+                ImGui.NewFrame();Call(host,"Draw",1f/60);
+                bool showing=ImGui.Begin("###vsdirector-creation-"+panel);
+                if(!showing||ImGui.GetWindowDockID()!=(panel=="view"?viewDock:propertiesDock))throw new Exception("Checked panel was not brought to front: "+panel);
+                ImGui.End();ImGui.Render();
+            }
+            Call(workspace,"ShowCreationPanel","view");Frame();Frame();
+            AccessTools.Field(workspace.GetType(),"<Active>k__BackingField").SetValue(workspace,false);
+            Call(workspace,"Enter");Frame();Frame();
+            ImGui.NewFrame();Call(host,"Draw",1f/60);
+            bool restoredProperties=ImGui.Begin("###vsdirector-creation-properties");ImGui.End();ImGui.Render();
+            if(!restoredProperties)throw new Exception("Re-entering creation did not reveal the enabled Properties window");
+            Console.WriteLine("PASS checked window commands select native dock tabs; re-entering reveals enabled Properties without reopening closed panels");
             Console.WriteLine("PASS creation View shares the inspector dock and closes/reopens without changing replay layout");
+            uint toolsDock=(uint)AccessTools.Property(host.GetType(),"CreationToolsDockId").GetValue(host)!;
+            if(toolsDock==0||toolsDock==propertiesDock)throw new Exception("Tools must have an independent dock above Properties");
+            // Migrate the previously oversized split without resetting other docks.
+            Call(host,"SetNodeSize",toolsDock,new Vector2(280,260));
+            AccessTools.Property(host.GetType(),"MigrateCreationTools").SetValue(host,true);
+            Frame();Frame();Frame();
+            ImGui.NewFrame(); Call(host,"Draw",1f/60); ImGui.Begin("###vsdirector-creation-tools");
+            float compactHeight=ImGui.GetWindowSize().Y; ImGui.End(); ImGui.Render();
+            if(compactHeight>150 || compactHeight<40)throw new Exception("Tools migration did not fit its button rows: "+compactHeight);
+            AccessTools.Field(workspace.GetType(),"toolsPanel").SetValue(workspace,false);Frame();Frame();
+            AccessTools.Field(workspace.GetType(),"toolsPanel").SetValue(workspace,true);Frame();Frame();
+            if((uint)AccessTools.Property(host.GetType(),"CreationToolsDockId").GetValue(host)! !=toolsDock)throw new Exception("Tools reopen lost its dock");
+            // Simulate moving the native window into the left dock; ordinary frames must preserve it.
+            uint leftDock=(uint)AccessTools.Property(host.GetType(),"LeftDockId").GetValue(host)!;
+            Call(host,"DockWindow","###vsdirector-creation-tools",leftDock);
+            Call(host,"Finish",(uint)AccessTools.Field(host.GetType(),"creationDock").GetValue(host)!);Frame();Frame();
+            if((uint)AccessTools.Property(host.GetType(),"CreationToolsDockId").GetValue(host)! !=leftDock)throw new Exception("Moved Tools window was forced back to its default dock");
+            Call(workspace,"ShowCreationPanel","browser");Frame();Frame();
+            ImGui.NewFrame();Call(host,"Draw",1f/60);
+            bool objectListVisible=ImGui.Begin("###vsdirector-creation-browser");
+            if(!objectListVisible||ImGui.GetWindowDockID()!=leftDock)throw new Exception("Object list command failed to reveal its tab in the saved dock");
+            ImGui.End();ImGui.Render();
+            Call(host,"ResetLayout");Frame();Frame();
+            propertiesDock=(uint)AccessTools.Property(host.GetType(),"InspectorDockId").GetValue(host)!;
+            if((uint)AccessTools.Property(host.GetType(),"CreationToolsDockId").GetValue(host)! ==propertiesDock)throw new Exception("Reset did not restore the Tools split");
+            Call(workspace,"PersistEditorPreferences");
+            AccessTools.Field(workspace.GetType(),"toolsPanel").SetValue(workspace,false);
+            Call(workspace,"RestoreEditorPreferences");
+            if(!(bool)AccessTools.Field(workspace.GetType(),"toolsPanel").GetValue(workspace)!)throw new Exception("Tools preference failed to restore");
+            Console.WriteLine("PASS independent Tools dock closes/reopens, retains native moves and resets separately from replay; preferences restore");
+            foreach (var entry in new[] { ("bonesPanel", "bones"), ("ikPanel", "ik"), ("actionsPanel", "actions") })
+            {
+                AccessTools.Field(workspace.GetType(), entry.Item1).SetValue(workspace, false); Frame();
+                AccessTools.Field(workspace.GetType(), entry.Item1).SetValue(workspace, true);
+                AccessTools.Field(workspace.GetType(), "focusRigPanel").SetValue(workspace, entry.Item2); Frame(); Frame();
+                ImGui.NewFrame(); Call(host, "Draw", 1f / 60); ImGui.Begin("###vsdirector-creation-" + entry.Item2);
+                uint rigDock = ImGui.GetWindowDockID(); ImGui.End(); ImGui.Render();
+                if (rigDock != 0) throw new Exception("Optional rig panel must initially float: " + entry.Item2);
+            }
+            Console.WriteLine("PASS optional Bones/IK/Actions windows close and reopen without default tab stacks");
             uint creationDock = (uint)AccessTools.Field(host.GetType(), "creationDock").GetValue(host)!;
             if (creationDock == 0 || creationDock == legacyDock) throw new Exception("Creation shares the legacy dock root.");
             Call(host, "ResetLayout"); Frame(); Frame(true);
@@ -449,7 +690,7 @@ internal static partial class DirectorImGuiProbe
             io.AddKeyEvent(ImGuiKey.Escape, true); Frame(); io.AddKeyEvent(ImGuiKey.Escape, false); Frame();
             io.MousePos = new(20, 350); io.MouseDown[0] = true; Frame(); io.MouseDown[0] = false; Frame();
             io.DisplaySize = new(1280, 800); Frame();
-            session.AutoKey = true; session.Edit("seed key", _ => session.WriteKey(selected.Id, Guid.Empty, CreationChannel.Position, default)); session.AutoKey = false;
+            session.SetEditTask(CreationEditTask.Animation); session.AutoKey = true; session.Edit("seed key", _ => session.WriteKey(selected.Id, Guid.Empty, CreationChannel.Position, default)); session.AutoKey = false;
             void Draft() { session.SetTransform(selected.Id, Guid.Empty, new() { Position = new(5, 0, 0) }); session.Changed(); }
             bool continued = false;
             Action next = () => continued = true;
@@ -519,7 +760,7 @@ internal static partial class DirectorImGuiProbe
             Console.WriteLine("PASS pending modal X/Escape/reopen preserves drafts and releases input/exit in Chinese/English at 100/150/200%");
             Console.WriteLine("PASS pending preview record/revert/cancel transitions and persisted creation dock recovery");
             Console.WriteLine("PASS isolated creation dock, legacy callback suspension/restoration and independent layout reset");
-            Console.WriteLine("PASS new/open project restores three dock panels, selects camera, runs real ImGuizmo and resolves Chinese/English creation text");
+            Console.WriteLine("PASS new/open project restores four dock panels, selects camera, runs real ImGuizmo and resolves Chinese/English creation text");
         }
         finally
         {
@@ -559,8 +800,182 @@ internal static partial class DirectorImGuiProbe
             if (linked == 0) throw new Exception("Creation shader link failed: " + GL.GetProgramInfoLog(program));
             if (GL.GetAttribLocation(program, "vertexPositionIn") != 0 || GL.GetAttribLocation(program, "uvIn") != 1)
                 throw new Exception("Creation shader attributes do not match engine mesh layout.");
+            CheckCreationGlowCoverage(program);
             Console.WriteLine("PASS creation GLSL 330 compile/link, mesh attribute bindings and GL state restoration");
         }
         finally { GL.DeleteProgram(program); GL.DeleteShader(vertex); GL.DeleteShader(fragment); }
+    }
+
+    private static void CheckAdvancedParticleParameters(object workspace,DirectorCreationSession session)
+    {
+        var original=session.Project!;
+        var obj=new CreationSceneObject{Kind=CreationObjectKind.Particle,ParticleEffect=new()};
+        var effect=obj.ParticleEffect;var first=effect.Emitters[0];first.Source="probe:one";first.Family="probe:family";first.Variant="probe:first";
+        var variant=CreationJson.Clone(first);variant.Id=Guid.NewGuid();variant.Source="probe:two";
+        var family=CreationJson.Clone(first);family.Id=Guid.NewGuid();family.Source="probe:three";family.Variant="probe:second";
+        effect.Emitters.AddRange([variant,family]);
+        foreach(var field in CreationParticleFields.All.Where(f=>f.Kind=="evolve"))first.Properties[field.Name]=field.Length==0?CreationParticleFields.Evolution("LINEAR",.3):new System.Text.Json.Nodes.JsonArray(Enumerable.Range(0,3).Select(_=>(System.Text.Json.Nodes.JsonNode)CreationParticleFields.Evolution("LINEAR",.3)).ToArray());
+        first.Properties["SecondaryParticles"]=new System.Text.Json.Nodes.JsonArray(CreationParticleFields.Defaults());
+        first.Properties["DeathParticles"]=new System.Text.Json.Nodes.JsonArray(CreationParticleFields.Defaults());
+        session.Open(new(){Objects=[obj]});session.SelectedObject=obj.Id;
+        var type=workspace.GetType();var scope=AccessTools.Field(type,"particleScope");
+        CreationParticleEffect Current()=>session.Project!.Objects[0].ParticleEffect!;
+        try
+        {
+            for(int mode=0;mode<3;mode++)
+            {
+                scope.SetValue(workspace,mode);
+                session.Edit("particle batch",_=>AccessTools.Method(type,"SetParticleNode").Invoke(workspace,[Current(),Current().Emitters[0],new[]{"Quantity","avg"},System.Text.Json.Nodes.JsonValue.Create(10+mode)]));
+                var expected=mode==0?new[]{10d,1,1}:mode==1?new[]{11d,11,1}:new[]{12d,12,12};
+                for(int i=0;i<3;i++)if(CreationParticleFields.Number((System.Text.Json.Nodes.JsonObject)CreationParticleFields.Find(Current().Emitters[i].Properties,"Quantity")!,"avg")!=expected[i])throw new Exception("Particle edit scope changed wrong emitters");
+                session.Undo();
+                if(Current().Emitters.Any(e=>CreationParticleFields.Number((System.Text.Json.Nodes.JsonObject)CreationParticleFields.Find(e.Properties,"Quantity")!,"avg")!=1))throw new Exception("Particle scope undo failed");
+                session.Redo();session.Undo();
+            }
+            foreach(string language in new[]{"zh-cn","en"})
+            foreach(float scale in new[]{1f,1.5f,2f})
+            foreach(float width in new[]{220f,320f,520f})
+            {
+                LoadCreationProbeLanguage(language);
+                for(int frame=0;frame<4;frame++)
+                {
+                    ImGui.NewFrame();ImGui.SetNextWindowPos(Vector2.Zero);ImGui.SetNextWindowSize(new(width*scale,600));
+                    ImGui.Begin("particle-parameter-probe",ImGuiWindowFlags.NoSavedSettings|ImGuiWindowFlags.NoResize);ImGui.SetWindowFontScale(scale);
+                    if(frame==1)ImGui.SetScrollY(ImGui.GetScrollMaxY()/2);if(frame==2)ImGui.SetScrollY(ImGui.GetScrollMaxY());
+                    AccessTools.Method(type,"DrawNativeParticleFields").Invoke(workspace,[Current(),Current().Emitters[0],Current().Emitters[0].Properties,Array.Empty<string>(),0]);
+                    if(frame==3&&ImGui.GetScrollMaxX()>1)throw new Exception($"Native particle fields overflow: {language} width {width} scale {scale}: {ImGui.GetScrollMaxX()}");
+                    ImGui.SetWindowFontScale(1);ImGui.End();ImGui.Render();
+                }
+            }
+            Current().Upgrade();
+            var active=Current().Emitters[0];active.Modules!.Gradient.Enabled=true;
+            active.Modules.Drivers["Size"]=new(){Mode=ParticleValueMode.Curve,Clock=ParticleClock.Life};
+            foreach(string language in new[]{"zh-cn","en"})
+            foreach(float scale in new[]{1f,1.5f,2f})
+            foreach(float width in new[]{220f,520f})
+            foreach(string page in new[]{"common","emission","motion","appearance","environment","children","shape","schedule","forces","material","geometry","drivers"})
+            {
+                LoadCreationProbeLanguage(language);
+                bool module=page is "shape" or "schedule" or "forces" or "material" or "geometry" or "drivers";
+                AccessTools.Field(type,"particlePage").SetValue(workspace,module?"modules":page);
+                AccessTools.Field(type,"particleModulePage").SetValue(workspace,page);
+                for(int frame=0;frame<3;frame++)
+                {
+                    ImGui.NewFrame();ImGui.SetNextWindowPos(Vector2.Zero);ImGui.SetNextWindowSize(new(width*scale,650));
+                    ImGui.Begin("particle-v3-pages",ImGuiWindowFlags.NoSavedSettings|ImGuiWindowFlags.NoResize);ImGui.SetWindowFontScale(scale);
+                    AccessTools.Method(type,"DrawAdvancedParticleEditor").Invoke(workspace,[session.Project!.Objects[0]]);
+                    if(frame==2&&ImGui.GetScrollMaxX()>1)throw new Exception($"Particle v3 page {page} overflow: {language}, {width}, {scale}: {ImGui.GetScrollMaxX()}");
+                    ImGui.SetWindowFontScale(1);ImGui.End();ImGui.Render();
+                }
+            }
+            AccessTools.Field(type,"particlePage").SetValue(workspace,"common");
+            foreach(string language in new[]{"zh-cn","en"})
+            foreach(float scale in new[]{1f,1.5f,2f})
+            foreach(float width in new[]{220f,520f})
+            {
+                LoadCreationProbeLanguage(language);
+                for(int frame=0;frame<3;frame++)
+                {
+                    ImGui.NewFrame();ImGui.SetNextWindowPos(Vector2.Zero);ImGui.SetNextWindowSize(new(width*scale,650));
+                    ImGui.Begin("particle-tools-probe",ImGuiWindowFlags.NoSavedSettings|ImGuiWindowFlags.NoResize);ImGui.SetWindowFontScale(scale);
+                    AccessTools.Method(type,"DrawTools").Invoke(workspace,[]);
+                    if(frame==2&&ImGui.GetScrollMaxX()>1)throw new Exception("Particle icon tools overflowed");
+                    ImGui.SetWindowFontScale(1);ImGui.End();ImGui.Render();
+                }
+            }
+            var icons=type.Assembly.GetType("VSDirector.Gui.DirectorImGuiIcons")!;
+            if((string)AccessTools.Method(icons,"Get").Invoke(null,["viewfinder"])! != "\ueb4e")throw new Exception("Particle viewfinder is not the Tabler glyph");
+            Console.WriteLine("PASS particle refresh/viewfinder tools fit bilingual narrow panels at 100/150/200%");
+            Console.WriteLine("PASS v3 parameter/module pages, gradients and drivers in Chinese/English at 220/520px and 100/150/200%");
+            Console.WriteLine("PASS advanced particle scope edits/undo/redo and all native/nested parameter controls in Chinese/English at narrow widths and 100/150/200%");
+        }
+        finally{scope.SetValue(workspace,0);session.Open(original);}
+    }
+
+    private static void CheckCreationGlowCoverage(int program)
+    {
+        int previousFramebuffer = GL.GetInteger(GetPName.FramebufferBinding);
+        bool scissorEnabled = GL.IsEnabled(EnableCap.ScissorTest);
+        int[] viewport = new int[4]; GL.GetInteger(GetPName.Viewport, viewport);
+        int framebuffer = GL.GenFramebuffer(), vao = GL.GenVertexArray(), buffer = GL.GenBuffer();
+        int[] textures = [GL.GenTexture(), GL.GenTexture()];
+        try
+        {
+            GL.BindFramebuffer(FramebufferTarget.Framebuffer, framebuffer);
+            for (int i = 0; i < textures.Length; i++)
+            {
+                GL.BindTexture(TextureTarget.Texture2D, textures[i]);
+                GL.TexImage2D(TextureTarget.Texture2D, 0, PixelInternalFormat.Rgba32f, 16, 16, 0, PixelFormat.Rgba, PixelType.Float, IntPtr.Zero);
+                GL.FramebufferTexture2D(FramebufferTarget.Framebuffer, FramebufferAttachment.ColorAttachment0 + i, TextureTarget.Texture2D, textures[i], 0);
+            }
+            GL.DrawBuffers(2, new[] { DrawBuffersEnum.ColorAttachment0, DrawBuffersEnum.ColorAttachment1 });
+            if (GL.CheckFramebufferStatus(FramebufferTarget.Framebuffer) != FramebufferErrorCode.FramebufferComplete)
+                throw new Exception("Creation glow probe framebuffer is incomplete.");
+            GL.Viewport(0, 0, 16, 16); GL.Disable(EnableCap.ScissorTest); GL.Disable(EnableCap.DepthTest); GL.Disable(EnableCap.CullFace);
+            GL.Enable(EnableCap.Blend); GL.BlendFunc(BlendingFactor.SrcAlpha, BlendingFactor.OneMinusSrcAlpha);
+            GL.BindVertexArray(vao); GL.BindBuffer(BufferTarget.ArrayBuffer, buffer);
+            float[] vertices = [-1,-1,0, 3,-1,0, -1,3,0];
+            GL.BufferData(BufferTarget.ArrayBuffer, vertices.Length * sizeof(float), vertices, BufferUsageHint.StaticDraw);
+            GL.VertexAttribPointer(0, 3, VertexAttribPointerType.Float, false, 3 * sizeof(float), 0); GL.EnableVertexAttribArray(0);
+            GL.UseProgram(program);
+            float[] identity = [1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1];
+            foreach (string name in new[] { "projectionMatrix", "viewMatrix", "modelMatrix" })
+                GL.UniformMatrix4(GL.GetUniformLocation(program, name), 1, false, identity);
+            GL.Uniform1(GL.GetUniformLocation(program, "textured"), 0);
+            GL.Uniform1(GL.GetUniformLocation(program, "surfaceShading"), 0);
+            GL.Uniform3(GL.GetUniformLocation(program, "worldLight"), .2f, .2f, .2f);
+            GL.Uniform3(GL.GetUniformLocation(program, "lightDirection"), 0f, 1f, 0f);
+            GL.Uniform1(GL.GetUniformLocation(program, "fogDensity"), 0f); GL.Uniform1(GL.GetUniformLocation(program, "fogMinimum"), 0f);
+            float[] pixel = new float[4];
+            foreach (float emission in new[] { 0f, .6f })
+            {
+                GL.ClearColor(1, 1, 1, 1); GL.Clear(ClearBufferMask.ColorBufferBit);
+                GL.Uniform4(GL.GetUniformLocation(program, "tint"), 1f, 1f, 1f, 1f);
+                GL.Uniform1(GL.GetUniformLocation(program, "glow"), emission); GL.DrawArrays(PrimitiveType.Triangles, 0, 3);
+                GL.ReadBuffer(ReadBufferMode.ColorAttachment1); GL.ReadPixels(8, 8, 1, 1, PixelFormat.Rgba, PixelType.Float, pixel);
+                if (Math.Abs(pixel[0] - emission) > .01 || Math.Abs(pixel[1]) > .01)
+                    throw new Exception("Actor retained underlying world bloom or lost explicit emission.");
+                if (emission == 0)
+                {
+                    GL.ReadBuffer(ReadBufferMode.ColorAttachment0); GL.ReadPixels(8, 8, 1, 1, PixelFormat.Rgba, PixelType.Float, pixel);
+                    if (Math.Abs(pixel[0] - .2) > .01) throw new Exception("Nonemissive actor ignores world lighting.");
+                }
+            }
+            Console.WriteLine("PASS real MRT framebuffer: nonemissive actors cover world bloom and respect darkness; explicit emission remains available");
+            GL.Uniform1(GL.GetUniformLocation(program,"glow"),0f);
+            GL.Uniform1(GL.GetUniformLocation(program,"particleMask"),1);
+            GL.ReadBuffer(ReadBufferMode.ColorAttachment0);
+            float SampleParticle(float u,float v,float alpha)
+            {
+                GL.VertexAttrib2(1,u,v);GL.ClearColor(0,0,0,0);GL.Clear(ClearBufferMask.ColorBufferBit);
+                GL.Uniform4(GL.GetUniformLocation(program,"tint"),1f,1f,1f,alpha);
+                GL.DrawArrays(PrimitiveType.Triangles,0,3);
+                GL.ReadPixels(8,8,1,1,PixelFormat.Rgba,PixelType.Float,pixel);return pixel[0];
+            }
+            float center=SampleParticle(.5f,.5f,1),edge=SampleParticle(.75f,.5f,1),corner=SampleParticle(0,0,1),faded=SampleParticle(.5f,.5f,.25f);
+            if(Math.Abs(center-.2f)>.01||Math.Abs(edge-.1f)>.01||corner>.001||Math.Abs(faded-.05f)>.01)
+                throw new Exception("Particle mask did not remove square corners or respect lifetime fade");
+            Console.WriteLine("PASS actual particle shader: soft edges, transparent corners, lifetime alpha and world lighting");
+            if(GL.GetAttribLocation(program,"particleLightIn")!=3)throw new Exception("Advanced particle light attribute does not match the mesh layout");
+            GL.Uniform1(GL.GetUniformLocation(program,"vertexColorMode"),1);
+            GL.VertexAttrib4(2,.25f,.5f,1f,.5f);GL.VertexAttrib3(3,.4f,.2f,.1f);
+            if(Math.Abs(SampleParticle(.5f,.5f,1)-.05f)>.002)throw new Exception("Advanced particle vertex color/alpha or per-particle light ignored");
+            GL.Uniform1(GL.GetUniformLocation(program,"glow"),.6f);
+            if(Math.Abs(SampleParticle(.5f,.5f,1)-.095f)>.002)throw new Exception("Advanced particle glow does not bypass local darkness");
+            GL.Uniform1(GL.GetUniformLocation(program,"glow"),0f);
+            GL.BlendFunc(BlendingFactor.SrcAlpha,BlendingFactor.One);
+            GL.ClearColor(.1f,.1f,.1f,1);GL.Clear(ClearBufferMask.ColorBufferBit);GL.DrawArrays(PrimitiveType.Triangles,0,3);
+            GL.ReadPixels(8,8,1,1,PixelFormat.Rgba,PixelType.Float,pixel);
+            if(Math.Abs(pixel[0]-.15f)>.002)throw new Exception("Advanced particle additive blend failed");
+            GL.Uniform1(GL.GetUniformLocation(program,"vertexColorMode"),0);
+            GL.BlendFunc(BlendingFactor.SrcAlpha,BlendingFactor.OneMinusSrcAlpha);
+            Console.WriteLine("PASS advanced particle vertex RGBA, per-particle lighting, glow and additive blending in real MRT framebuffer");
+        }
+        finally
+        {
+            if (scissorEnabled) GL.Enable(EnableCap.ScissorTest); else GL.Disable(EnableCap.ScissorTest);
+            GL.BindFramebuffer(FramebufferTarget.Framebuffer, previousFramebuffer); GL.Viewport(viewport[0], viewport[1], viewport[2], viewport[3]);
+            GL.DeleteFramebuffer(framebuffer); GL.DeleteVertexArray(vao); GL.DeleteBuffer(buffer); foreach (int texture in textures) GL.DeleteTexture(texture);
+        }
     }
 }

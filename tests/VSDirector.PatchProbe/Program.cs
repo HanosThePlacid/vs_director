@@ -20,7 +20,14 @@ using VSDirector.Networking;
 using ProtoBuf;
 
 const string harmonyId = "vscn.vsdirector.patch-probe";
+DirectorBinaryCompatibilityChecks.Run(typeof(VSDirectorModSystem).Assembly);
+DirectorGameCompatibilityChecks.Run();
+DirectorClientCompatibilityChecks.Run();
+DirectorOptionalServerChecks.Run();
+DirectorAdvancedParticleChecks.Run();
+DirectorBlueprintChecks.Run();
 DirectorPerformanceChecks.Run();
+DirectorCreationRecordingChecks.Run();
 Harmony harmony = new(harmonyId);
 
 Type indexedWorldType = typeof(VSDirectorModSystem).Assembly.GetType("VSDirector.Replay.DirectorReplayWorldPlayback", true)!;
@@ -92,7 +99,7 @@ MethodBase[] targets =
 {
     AccessTools.Method(typeof(EntityPlayer), "updateEyeHeight"),
     AccessTools.Method(typeof(EntityPlayer), "canStandUp"),
-    AccessTools.Method(typeof(ModelDataPoolLocation), nameof(ModelDataPoolLocation.IsVisible)),
+    AccessTools.Method(typeof(MeshDataPool), nameof(MeshDataPool.FrustumCull)),
     AccessTools.PropertyGetter(typeof(EntityPlayer), nameof(EntityPlayer.AnimManager)),
     AccessTools.Method(typeof(ClientSystemEntities), "OnGameTick", new[] { typeof(float) }),
     AccessTools.Method(typeof(AnimationManager), nameof(AnimationManager.OnClientFrame), new[] { typeof(float) }),
@@ -574,8 +581,7 @@ try
     AssertWorkspaceViewportPatch(
         AccessTools.Method(
             typeof(PickingRayUtil),
-            nameof(PickingRayUtil.GetPickingRayByMouseCoordinates),
-            new[] { typeof(ClientMain) })
+            nameof(PickingRayUtil.GetPickingRayByMouseCoordinates))
             ?? throw new MissingMethodException(
                 typeof(PickingRayUtil).FullName,
                 nameof(PickingRayUtil.GetPickingRayByMouseCoordinates)),
@@ -2829,7 +2835,7 @@ try
         throw new InvalidOperationException(
             "Settings must use the native VSImGui window, controls, and persistent footer actions.");
     }
-    Console.WriteLine("PASS settings uses searchable native collapsing groups, controls, and footer actions");
+    Console.WriteLine("PASS settings uses searchable native categories, controls, and footer actions");
 
     if (typeof(VSDirectorModSystem).GetMethod("TopActivityStatusText", BindingFlags.Instance | BindingFlags.NonPublic) is not null
         || typeof(DirectorConfig).GetProperty("ShowCameraStatusBar") is not null
@@ -4131,10 +4137,7 @@ try
     {
         CalculateMatrices = false
     };
-    AnimationManager scheduledAnimationManager = new()
-    {
-        Animator = primaryAnimatorProbe
-    };
+    AnimationManager scheduledAnimationManager = DirectorGameCompatibilityChecks.Animation(primaryAnimatorProbe);
     scheduledAnimationManager.ActiveAnimationsByAnimCode["offscreenprobe"] =
         detachedProbeActive["offscreenprobe"].Clone();
     ConstructorInfo offscreenEntityStateConstructor = offscreenEntityState
@@ -4379,10 +4382,7 @@ try
     {
         CalculateMatrices = false
     };
-    AnimationManager replayRegistrationManager = new()
-    {
-        Animator = replayRegistrationAnimator
-    };
+    AnimationManager replayRegistrationManager = DirectorGameCompatibilityChecks.Animation(replayRegistrationAnimator);
     replayRegistrationManager.ActiveAnimationsByAnimCode["offscreenprobe"] =
         detachedProbeActive["offscreenprobe"].Clone();
     DirectorReplayAnimationSample replayRegistrationSample = new()
@@ -5457,7 +5457,7 @@ try
         AccessTools.Method(
             typeof(BlockEntityOpenableContainer),
             nameof(BlockEntityOpenableContainer.OnReceivedServerPacket),
-            new[] { typeof(int), typeof(byte[]) }),
+            new[] { typeof(int), typeof(BlockEntity).Assembly.GetType("Vintagestory.API.Datastructures.SerializedData") ?? typeof(byte[]) }),
         AccessTools.Method(
             typeof(AnimationUtil),
             nameof(AnimationUtil.StartAnimation),
@@ -5486,7 +5486,8 @@ try
             !blockEntityStateTargets.Contains(target)))
     {
         throw new InvalidOperationException(
-            "Block-entity dirty, synchronization, packet, or animation coverage is incomplete.");
+            "Block-entity dirty, synchronization, packet, or animation coverage is incomplete: "
+            + string.Join(", ", requiredBlockEntityStateTargets.Where(t => !blockEntityStateTargets.Contains(t)).Select(t => t?.ToString() ?? "missing method")));
     }
     MethodInfo captureDoorSet = blockEntityStateCapturePatch.GetMethod(
         "CaptureDoorSet",
@@ -5583,7 +5584,7 @@ try
         BindingFlags.Static | BindingFlags.NonPublic)
         ?? throw new InvalidOperationException("Workspace button state helper was not found.");
     ConstructorInfo composerConstructor = typeof(GuiComposer).GetConstructor(
-        BindingFlags.Instance | BindingFlags.NonPublic,
+        BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic,
         binder: null,
         new[] { typeof(ICoreClientAPI), typeof(ElementBounds), typeof(string) },
         modifiers: null)
@@ -6075,7 +6076,7 @@ try
     {
         throw new InvalidOperationException("Replay animation keys do not preserve the shape animation identity.");
     }
-    AnimationManager aliasedAnimationManager = new();
+    AnimationManager aliasedAnimationManager = DirectorGameCompatibilityChecks.Animation();
     aliasedAnimationManager.ActiveAnimationsByAnimCode["death"] = new AnimationMetaData
     {
         Code = "die",
@@ -6098,7 +6099,7 @@ try
         throw new InvalidOperationException("Replay animation aliases would restart an already-active animation.");
     }
     Console.WriteLine("PASS replay animation metadata-code aliases stay active");
-    AnimationManager sharedShapeAnimationManager = new();
+    AnimationManager sharedShapeAnimationManager = DirectorGameCompatibilityChecks.Animation();
     sharedShapeAnimationManager.ActiveAnimationsByAnimCode["creativefly"] = new AnimationMetaData
     {
         Code = "creativefly",
@@ -6875,6 +6876,29 @@ try
     }
     Console.WriteLine("PASS deterministic replay audio WAV rendering");
 
+    Array creationFrames = Array.CreateInstance(replayAudioFrame, 30);
+    foreach (int index in Enumerable.Range(0, 30))
+    {
+        object frame = audioFrameConstructor.Invoke(new object[] { index / 30d, new CameraPreset { Fov = 70f } });
+        replayAudioFrame.GetProperty("Muted")!.SetValue(frame, 10 > index || index >= 20);
+        replayAudioFrame.GetProperty("Discontinuity")!.SetValue(frame, index == 10);
+        replayAudioFrame.GetProperty("NextReplaySeconds")!.SetValue(frame, (index + 1) / 30d);
+        creationFrames.SetValue(frame, index);
+    }
+    try
+    {
+        renderReplayWave.Invoke(null, new object[] { audioPlan, creationFrames, 30, replayWavePath, CancellationToken.None, null! });
+        byte[] wave = File.ReadAllBytes(replayWavePath);
+        int sectionBytes = DirectorReplayAudioExportPolicy.SampleRate / 3 * 4;
+        if (wave.Length != 44 + sectionBytes * 3
+            || wave.Skip(44).Take(sectionBytes).Any(value => value != 0)
+            || !wave.Skip(44 + sectionBytes).Take(sectionBytes).Any(value => value != 0)
+            || wave.Skip(44 + sectionBytes * 2).Any(value => value != 0))
+            throw new InvalidOperationException("Creation recording audio lost its project offset, silence gaps, or active source samples.");
+    }
+    finally { File.Delete(replayWavePath); }
+    Console.WriteLine("PASS creation recorded audio retains project-frame timing and silent gaps around active performance clips");
+
     var freezeAudioTrack = new DirectorReplayElementTrack { TrackType = DirectorReplayElementTrackType.Freeze };
     var freezeAudioTimeline = new DirectorReplayViewportTimeline
     {
@@ -7593,12 +7617,7 @@ try
     {
         throw new InvalidOperationException("Container lid animation was absent from replay data.");
     }
-    TreeAttribute openContainerTree = new();
-    using (MemoryStream animationTreeStream = new(openContainerData, writable: false))
-    using (BinaryReader animationTreeReader = new(animationTreeStream))
-    {
-        openContainerTree.FromBytes(animationTreeReader);
-    }
+    TreeAttribute openContainerTree = DirectorGameCompatibilityChecks.ReadTree(openContainerData);
     ITreeAttribute serializedAnimations = openContainerTree.GetTreeAttribute(
         "vsdirectorReplayAnimations")
         ?? throw new InvalidOperationException("Replay animation tree was absent from container data.");
@@ -7606,12 +7625,8 @@ try
         ?? throw new InvalidOperationException("Replay animation binding was absent from container data.");
     byte[] serializedLid = serializedBinding.GetBytes("0")
         ?? throw new InvalidOperationException("Replay lid metadata was absent from its animation binding.");
-    using (MemoryStream lidStream = new(serializedLid, writable: false))
-    using (BinaryReader lidReader = new(lidStream))
     {
-        AnimationMetaData lidMetadata = AnimationMetaData.FromBytes(
-            lidReader,
-            Vintagestory.API.Config.GameVersion.ShortGameVersion);
+        AnimationMetaData lidMetadata = DirectorGameCompatibilityChecks.ReadAnimation(serializedLid);
         if (!string.Equals(lidMetadata.Code, "lidopen", StringComparison.Ordinal))
         {
             throw new InvalidOperationException("Replay lid metadata code did not round trip.");
@@ -8209,46 +8224,6 @@ try
             TotalColumns = 7,
             SentColumns = 5
         },
-        new DirectorSharedCameraDto
-        {
-            Id = Guid.NewGuid().ToString("D"),
-            Name = "Shared probe",
-            X = 10d,
-            Y = 20d,
-            Z = 30d,
-            Fov = 70f,
-            Dimension = 2
-        },
-        new DirectorSharedCameraRequest
-        {
-            Action = (int)DirectorSharedCameraAction.Upsert,
-            Camera = new DirectorSharedCameraDto
-            {
-                Id = Guid.NewGuid().ToString("D"),
-                Name = "Nested request camera",
-                X = 1d,
-                Y = 2d,
-                Z = 3d,
-                Fov = 60f,
-                Dimension = 1
-            }
-        },
-        new DirectorSharedCameraCatalog
-        {
-            Cameras = new List<DirectorSharedCameraDto>
-            {
-                new()
-                {
-                    Id = Guid.NewGuid().ToString("D"),
-                    Name = "Nested catalog camera",
-                    X = 4d,
-                    Y = 5d,
-                    Z = 6d,
-                    Fov = 80f,
-                    Dimension = 3
-                }
-            }
-        }
     };
     foreach (object message in networkMessages)
     {
@@ -8309,24 +8284,6 @@ try
         {
             throw new InvalidOperationException("Replay chunk preload corridor did not round trip.");
         }
-        if (message is DirectorSharedCameraRequest cameraRequest
-            && clone is DirectorSharedCameraRequest clonedCameraRequest
-            && (!string.Equals(cameraRequest.Camera.Id, clonedCameraRequest.Camera.Id, StringComparison.Ordinal)
-                || !string.Equals(cameraRequest.Camera.Name, clonedCameraRequest.Camera.Name, StringComparison.Ordinal)))
-        {
-            throw new InvalidOperationException("Shared-camera request payload did not round trip.");
-        }
-        if (message is DirectorSharedCameraCatalog catalog
-            && clone is DirectorSharedCameraCatalog clonedCatalog
-            && (clonedCatalog.Cameras.Count != catalog.Cameras.Count
-                || !string.Equals(
-                    catalog.Cameras[0].Name,
-                    clonedCatalog.Cameras[0].Name,
-                    StringComparison.Ordinal)))
-        {
-            throw new InvalidOperationException("Shared-camera catalog payload did not round trip.");
-        }
-
         Console.WriteLine($"PASS protobuf {message.GetType().Name}");
     }
 

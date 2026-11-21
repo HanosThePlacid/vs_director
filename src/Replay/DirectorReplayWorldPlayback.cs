@@ -1,3 +1,4 @@
+using VSDirector.Compatibility;
 using System.Buffers;
 using System.Diagnostics;
 using System.Runtime.CompilerServices;
@@ -552,14 +553,13 @@ internal sealed class DirectorReplayWorldPlayback : IDisposable
                 chunkSnapshot.ChunkZ);
             if (baselineExtraChunkPositions is null)
             {
-                baselineExtraChunkPositions = chunk?.BlockEntities.Keys
-                    .Select(position => new BlockPos(
-                        position.X,
-                        position.Y,
-                        position.Z,
+                baselineExtraChunkPositions = DirectorGameCompatibility.BlockEntities(chunk)
+                    .Select(entity => new BlockPos(
+                        entity.Pos.X,
+                        entity.Pos.Y,
+                        entity.Pos.Z,
                         document.WorldSnapshot.Dimension))
-                    .ToArray()
-                    ?? Array.Empty<BlockPos>();
+                    .ToArray();
                 baselineExtraChunkPositionIndex = 0;
             }
 
@@ -848,10 +848,10 @@ internal sealed class DirectorReplayWorldPlayback : IDisposable
         if (historicalChangeIndex < historicalChanges.Count) return false;
         // The baseline is authoritative even where the block IDs did not change.
         // Captured block-entity events at this timestamp are applied after the chunk.
-        historicalBlockEntities ??= game.WorldMap.GetChunk(chunk.ChunkX,
+        historicalBlockEntities ??= DirectorGameCompatibility.BlockEntities(game.WorldMap.GetChunk(chunk.ChunkX,
             chunk.ChunkY + document.WorldSnapshot.Dimension * GlobalConstants.DimensionSizeInChunks,
-            chunk.ChunkZ)?.BlockEntities.Keys.Select(p => new BlockPos(p.X, p.Y, p.Z,
-                document.WorldSnapshot.Dimension)).ToArray() ?? [];
+            chunk.ChunkZ)).Select(entity => new BlockPos(entity.Pos.X, entity.Pos.Y, entity.Pos.Z,
+                document.WorldSnapshot.Dimension)).ToArray();
         while (historicalBlockEntityIndex < historicalBlockEntities.Length
             && budget >= BlockEntityOperationCost && HasBaselineTime(stopwatch))
         {

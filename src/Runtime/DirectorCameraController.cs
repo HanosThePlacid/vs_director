@@ -1,3 +1,4 @@
+using VSDirector.Compatibility;
 using System;
 using System.Reflection;
 using HarmonyLib;
@@ -94,6 +95,45 @@ internal sealed class DirectorCameraController : IDisposable
             && follow.LastTargetEntityId != localPlayer.EntityId;
 
     public bool IsFreeCamera => freeCameraActive;
+
+    internal bool ZoomFreeCamera(double delta, CreationVector? target)
+    {
+        if (disposed || !freeCameraActive || activeCamera is not { } camera || externalInputLocked
+            || !double.IsFinite(delta) || delta == 0) return false;
+        var forward = EntityPos.GetViewVector(DegreesToRadians(camera.Pitch), DegreesToRadians(camera.Yaw));
+        double x = forward.X, y = forward.Y, z = forward.Z;
+        double distance = Math.Max(.25, config.ReplayFreeCameraSpeed * .1) * delta;
+        if (target is { } point && point.Finite())
+        {
+            x = point.X - camera.X; y = point.Y - camera.Y; z = point.Z - camera.Z;
+            double length = Math.Sqrt(x*x + y*y + z*z);
+            if (length < .000001) return false;
+            double next = Math.Max(.25, length * Math.Exp(-Math.Clamp(delta, -10, 10) * .15));
+            if (delta > 0 && length <= .25) return false;
+            distance = length - next; x /= length; y /= length; z /= length;
+        }
+        // Move the editor camera only; keep its orientation, FOV and free-look
+        // input state. Never reactivate a shooting camera or scale the actor.
+        activeCamera = camera.DeepClone();
+        activeCamera.X += x * distance; activeCamera.Y += y * distance; activeCamera.Z += z * distance;
+        preparedCameraPose = null;
+        return true;
+    }
+    internal bool OrbitFreeCamera(CreationVector target, float dx, float dy)
+    {
+        if (disposed || !freeCameraActive || activeCamera is not { } camera || externalInputLocked
+            || !target.Finite() || !float.IsFinite(dx) || !float.IsFinite(dy) || dx == 0 && dy == 0) return false;
+        double x = target.X-camera.X, y = target.Y-camera.Y, z = target.Z-camera.Z;
+        double radius = Math.Sqrt(x*x+y*y+z*z);
+        if (radius < .001) return false;
+        double yaw = Math.Atan2(x,z) * DegreesPerRadian - dx * .4;
+        double pitch = Math.Clamp(180 - Math.Asin(Math.Clamp(y/radius,-1,1))*DegreesPerRadian + dy*.4, MinNativePitchDegrees, MaxNativePitchDegrees);
+        var forward = EntityPos.GetViewVector(DegreesToRadians((float)pitch), DegreesToRadians((float)yaw));
+        activeCamera = camera.DeepClone(); activeCamera.Yaw = (float)CameraFollowMath.NormalizeDegrees(yaw);
+        activeCamera.Pitch = (float)pitch; activeCamera.Roll = 0;
+        activeCamera.X = target.X-forward.X*radius; activeCamera.Y = target.Y-forward.Y*radius; activeCamera.Z = target.Z-forward.Z*radius;
+        preparedCameraPose = null; return true;
+    }
 
     internal bool UsesDetachedThirdPersonRendering(long entityId)
     {
@@ -224,7 +264,7 @@ internal sealed class DirectorCameraController : IDisposable
             Yaw = (float)(capi.World.Player.CameraYaw * DegreesPerRadian),
             Pitch = (float)(capi.World.Player.CameraPitch * DegreesPerRadian),
             Roll = (float)(capi.World.Player.CameraRoll * DegreesPerRadian),
-            Fov = (float)(game.MainCamera.Fov * DegreesPerRadian),
+            Fov = (float)(DirectorClientCompatibility.GetFov(game.MainCamera) * DegreesPerRadian),
             CreatedUtc = DateTimeOffset.UtcNow,
             ModifiedUtc = DateTimeOffset.UtcNow
         };
@@ -1066,9 +1106,9 @@ internal sealed class DirectorCameraController : IDisposable
         player.CameraRoll = DegreesToRadians(target.Roll);
         float targetFov = DegreesToRadians(Math.Clamp(target.Fov, 1f, 170f));
         float targetZNear = Math.Clamp(0.1f - Math.Clamp(target.Fov, 1f, 170f) / 90f / 25f, 0.025f, 0.1f);
-        if (Math.Abs(camera.Fov - targetFov) > 0.00001f || Math.Abs(camera.ZNear - targetZNear) > 0.00001f)
+        if (Math.Abs(DirectorClientCompatibility.GetFov(camera) - targetFov) > 0.00001f || Math.Abs(camera.ZNear - targetZNear) > 0.00001f)
         {
-            camera.Fov = targetFov;
+            DirectorClientCompatibility.SetFov(camera, targetFov);
             camera.ZNear = targetZNear;
             game.Reset3DProjection();
         }
@@ -2044,7 +2084,7 @@ internal sealed class DirectorCameraController : IDisposable
                 AllowCameraControl = allowCameraControlOverride ?? game.AllowCameraControl,
                 AllowCharacterControl = allowCharacterControlOverride ?? game.AllowCharacterControl,
                 ShouldRender2DOverlays = game.ShouldRender2DOverlays,
-                Fov = game.MainCamera.Fov,
+                Fov = DirectorClientCompatibility.GetFov(game.MainCamera),
                 ZNear = game.MainCamera.ZNear,
                 Yaw = player.CameraYaw,
                 Pitch = player.CameraPitch,
@@ -2068,7 +2108,7 @@ internal sealed class DirectorCameraController : IDisposable
             game.MainCamera.TppCameraDistanceMax = TppMax;
             game.MainCamera.Tppcameradistance = TppDistance;
             SetTargetCameraDistance(game.MainCamera, TargetTppDistance);
-            game.MainCamera.Fov = Fov;
+            DirectorClientCompatibility.SetFov(game.MainCamera, Fov);
             game.MainCamera.ZNear = ZNear;
             game.AllowCameraControl = AllowCameraControl;
             game.AllowCharacterControl = AllowCharacterControl;

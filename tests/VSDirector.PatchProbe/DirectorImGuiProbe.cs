@@ -62,16 +62,17 @@ internal static partial class DirectorImGuiProbe
         {
             Type runtime = Runtime("DirectorImGuiRuntime");
             AccessTools.Method(runtime, "InstallBackendPatches").Invoke(null, [backendHarmony]);
+            AccessTools.Method(runtime, "InstallFontPatches").Invoke(null, [backendHarmony]);
             string project = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "../../../../../"));
-            AccessTools.Field(runtime, "fontPath").SetValue(null,
-                Path.Combine(project, "assets/vsdirector/fonts/noto/NotoSansSC-Regular.ttf"));
-            // Exercise the same font hook used before VSImGui uploads its texture.
-            AccessTools.Method(runtime, "LoadFont").Invoke(null, null);
+            AccessTools.Field(runtime, "iconFontPath").SetValue(null,
+                Path.Combine(project, "assets/vsdirector/fonts/tabler/tabler-icons.ttf"));
+            CheckDefaultFontLifecycle(assembly);
             var io = ImGui.GetIO();
+            string gamePath = Environment.GetEnvironmentVariable("VINTAGE_STORY") ?? Path.GetFullPath(Path.Combine(project, "../Vintagestory"));
+            var font = io.Fonts.AddFontFromFileTTF(Path.Combine(gamePath, "assets/game/fonts/Montserrat-Regular.ttf"), 18);
+            // The host supplies text; Director merges only icons before upload.
+            AccessTools.Method(runtime, "PrepareFontTexture").Invoke(null, null);
             io.Fonts.GetTexDataAsRGBA32(out nint _, out int atlasWidth, out int atlasHeight);
-            var font = (ImFontPtr)AccessTools.Field(runtime, "font").GetValue(null)!;
-            foreach (char c in "导演模组视图属性设置播放时间线回放删除名称")
-                if (font.FindGlyphNoFallback(c).NativePtr == null) throw new Exception("Chinese glyph missing: " + c);
             var icons = (Dictionary<string, string>)AccessTools.Field(Runtime("DirectorImGuiIcons"), "Glyphs").GetValue(null)!;
             foreach (var icon in icons)
             {
@@ -84,10 +85,9 @@ internal static partial class DirectorImGuiProbe
             string playIcon = icons["play"];
             if ((string)AccessTools.Method(Runtime("DirectorImGuiForm"), "Caption").Invoke(null, ["", "play"])! != playIcon)
                 throw new Exception("Icon-only button captions contain horizontal whitespace.");
-            if (atlasWidth > 8192 || atlasHeight > 8192) throw new Exception("Chinese font atlas is too large.");
+            if (atlasWidth > 8192 || atlasHeight > 8192) throw new Exception("Game/icon font atlas is too large.");
 
             var logger = ProbeDispatchProxy.Create<ILogger>((m, _) => ProbeDispatchProxy.DefaultValue(m.ReturnType));
-            string gamePath = Environment.GetEnvironmentVariable("VINTAGE_STORY") ?? Path.GetFullPath(Path.Combine(project, "../Vintagestory"));
             AccessTools.Property(typeof(GamePaths), nameof(GamePaths.AssetsPath)).SetValue(null, Path.Combine(gamePath, "assets"));
             Lang.PreLoad(logger, Path.Combine(gamePath, "assets"), "zh-cn");
             var translations = Lang.AvailableLanguages[Lang.CurrentLocale].GetAllEntries();
@@ -159,7 +159,7 @@ internal static partial class DirectorImGuiProbe
             CheckDynamicReplayPanels(assembly, api, system);
             CheckExportWorkspaceRecovery(assembly, api);
             CheckNativeCoordinates(capture => { CheckIconGallery(font, icons, capture); CheckPreloadWindow(assembly, api, capture); CheckExportAndFooterWindows(assembly, api, capture); CheckReplayKeyframeWindow(assembly, api, capture); CheckCompactChoices(assembly); CheckAdaptiveBrowser(assembly, api, workspace, capture); CheckEditorControls(assembly); CheckNumericControls(assembly, capture); CheckTransformNumberControls(assembly, capture); CheckCameraHandles(assembly, capture); CheckCameraObservationViewport(assembly, capture); });
-            CheckNativeCoordinates(capture => CheckCreationWorkspace(assembly, api, capture));
+            CheckNativeCoordinates(capture => { CheckTimelineCursorFeedback(assembly, api, capture); CheckCreationWorkspace(assembly, api, capture); });
             bool emptyTimeline = false;
             var panelBounds = new Dictionary<string, (Vector2 Position, Vector2 Size)>();
             Action<string, Vector2, Vector2> boundsChanged = (id, position, size) =>
@@ -289,7 +289,7 @@ internal static partial class DirectorImGuiProbe
             RuntimeEnv.GUIScale = 1;
             Console.WriteLine("PASS camera preview/observation share timeline-right native dock tabs, follow row height/aspect, switch/close/reopen independently at 100/150/200%");
             Console.WriteLine("PASS ImGui native Properties/View/Transform tabs, Transform close/reopen at 100/150/200% and host layering/full viewport patch");
-            Console.WriteLine($"PASS native ImGui Chinese glyphs ({atlasWidth}x{atlasHeight} atlas), centered icon glyphs, single viewport, stable full-width camera/replay bottom pane, left/right Ctrl+wheel direction and single dispatch, timeline coordinates and game mouse passthrough at 100/150/200%; collapsed dialogs balance Begin/End");
+            Console.WriteLine($"PASS native ImGui game font ({atlasWidth}x{atlasHeight} atlas), centered icon glyphs, single viewport, stable full-width camera/replay bottom pane, left/right Ctrl+wheel direction and single dispatch, timeline coordinates and game mouse passthrough at 100/150/200%; collapsed dialogs balance Begin/End");
         }
         finally
         {

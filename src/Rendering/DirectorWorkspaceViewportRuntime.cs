@@ -646,8 +646,22 @@ internal static class DirectorWorkspacePickingRayPatch
     private readonly record struct MousePositionState(int X, int Y, bool Mapped);
 
     [HarmonyPrefix]
-    private static void Prefix(ClientMain game, out MousePositionState __state)
+    private static void Prefix(ClientMain game, object[] __args, out MousePositionState __state)
     {
+        // 1.23 passes the pointer explicitly instead of reading ClientMain.
+        // Rewriting only MouseCurrentX/Y would install successfully but pick
+        // objects at the wrong position inside a docked viewport.
+        if (__args.Length == 3)
+        {
+            __state = default;
+            if (DirectorWorkspaceViewportRuntime.TryMapUntransformedPickingPoint(
+                    (int)__args[1], (int)__args[2], out int x, out int y))
+            {
+                __args[1] = x;
+                __args[2] = y;
+            }
+            return;
+        }
         int originalX = game.MouseCurrentX;
         int originalY = game.MouseCurrentY;
         bool mapped = DirectorWorkspaceViewportRuntime.TryMapUntransformedPickingPoint(

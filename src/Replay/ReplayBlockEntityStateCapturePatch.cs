@@ -123,6 +123,7 @@ internal static class ReplayBlockEntityStateCapturePatch
                 finalizer: new HarmonyMethod(livePacketFinalizer) { priority = Priority.Last });
             targets.Add(liveBlockEntityPacket);
 
+            Type? serializedData = typeof(BlockEntity).Assembly.GetType("Vintagestory.API.Datastructures.SerializedData");
             foreach (Type type in LoadedBlockEntityTypes())
             {
                 PatchDeclaredStateBoundary(
@@ -141,6 +142,10 @@ internal static class ReplayBlockEntityStateCapturePatch
                     statePrefix,
                     statePostfix,
                     targets);
+
+                if (serializedData is not null)
+                    PatchDeclaredStateBoundary(harmony, type, nameof(BlockEntity.OnReceivedServerPacket),
+                        [typeof(int), serializedData], statePrefix, statePostfix, targets);
 
                 MethodInfo? initialize = type.GetMethod(
                     nameof(BlockEntity.Initialize),

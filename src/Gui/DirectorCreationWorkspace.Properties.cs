@@ -20,17 +20,8 @@ internal sealed partial class DirectorCreationWorkspace
     }
     private static bool Header(string label)
     {
-        float width = Math.Max(1, ImGui.GetContentRegionAvail().X - ImGui.GetFrameHeight() - ImGui.GetStyle().FramePadding.X * 2);
-        string display = label;
-        if (ImGui.CalcTextSize(display).X > width)
-        {
-            int length = display.Length;
-            while (length > 0 && ImGui.CalcTextSize(display[..length] + "…").X > width) length--;
-            display = display[..length] + "…";
-        }
         ImGui.PushID(label);
-        bool open = ImGui.CollapsingHeader(display + "###header");
-        if (display != label && ImGui.IsItemHovered()) ImGui.SetTooltip(label);
+        bool open = DirectorImGuiTheme.CollapsingHeader(label + "###header", ImGuiTreeNodeFlags.DefaultOpen);
         ImGui.PopID();
         return open;
     }
@@ -45,9 +36,9 @@ internal sealed partial class DirectorCreationWorkspace
     private static bool KeyButton(string id = "key") => DirectorImGuiIcons.Button(DirectorImGuiIcons.Get("square-rotated-filled") + "##" + id, new(ImGui.GetFrameHeight()));
     private static bool Combo(string label, string preview)
     { ImGui.TextWrapped(label); ImGui.SetNextItemWidth(-1); return ImGui.BeginCombo("##" + label, preview); }
-    private void Widget(string label, bool changed, Action apply, bool finished = false)
+    private void Widget(string label, bool changed, Action apply, bool finished = false, bool poseOnly = false)
     {
-        if (changed) Session.BeginGesture();
+        if (changed) Session.BeginGesture(poseOnly);
         if (changed) { apply(); Session.Changed(); }
         if (finished || ImGui.IsItemDeactivated()) Run(() => Session.EndGesture(label));
     }
@@ -57,16 +48,19 @@ internal sealed partial class DirectorCreationWorkspace
         bool changed = ImGui.InputText("##value", ref value, 2048);
         Widget(label, changed, () => set(value)); ImGui.PopID();
     }
-    private void Number(string label, double value, Action<double> set, double min = -1e8, double max = 1e8, float step = .1f)
+    private void Number(string label, double value, Action<double> set, double min = -1e8, double max = 1e8, float step = .1f, Action? key = null)
     {
         ImGui.PushID(label);
-        bool inline = ImGui.CalcTextSize(label).X + ImGui.GetStyle().ItemSpacing.X + 85 * DirectorImGuiTheme.Scale <= ImGui.GetContentRegionAvail().X;
+        float keyWidth=key is null?0:ImGui.GetFrameHeight()+ImGui.GetStyle().ItemSpacing.X;
+        bool inline = ImGui.CalcTextSize(label).X + ImGui.GetStyle().ItemSpacing.X + 85 * DirectorImGuiTheme.Scale + keyWidth <= ImGui.GetContentRegionAvail().X;
         if (inline) ImGui.AlignTextToFramePadding();
         ImGui.TextWrapped(label);
         if (inline) ImGui.SameLine();
-        ImGui.SetNextItemWidth(-1);
+        ImGui.SetNextItemWidth(Math.Max(1,ImGui.GetContentRegionAvail().X-keyWidth));
         bool changed = DirectorImGuiNumeric.Double("##value", ref value, step, min, max);
-        Widget(label, changed, () => set(value)); ImGui.PopID();
+        Widget(label, changed, () => set(value));
+        if(key is not null){ImGui.SameLine();if(KeyButton())Run(key);if(ImGui.IsItemHovered())ImGui.SetTooltip(L("creation-add-keyframe-at-current-time"));}
+        ImGui.PopID();
     }
     private void Toggle(string label, bool value, Action<bool> set)
     { if (Checkbox(label, ref value)) Session.Edit(label, _ => set(value)); }
@@ -84,11 +78,17 @@ internal sealed partial class DirectorCreationWorkspace
         if (ImGui.Combo("##choice", ref selected, names, names.Length)) Session.Edit(label, _ => set((T)Enum.ToObject(typeof(T), selected)));
         ImGui.PopID();
     }
-    private void VectorField(string label, CreationVector value, Action<CreationVector> set, float step = .1f, Action? key = null)
+    private void VectorField(string label, CreationVector value, Action<CreationVector> set, float step = .1f, Action? key = null, bool inline = false, bool poseOnly = false)
     {
         ImGui.PushID(label);
+        if (inline)
+        {
+            DrawTransformRow(label, value, set, step, key, poseOnly);
+            ImGui.PopID();
+            return;
+        }
         ImGui.AlignTextToFramePadding(); ImGui.TextUnformatted(label);
-        if (key is not null) { ImGui.SameLine(); if (KeyButton()) Run(key); if (ImGui.IsItemHovered()) ImGui.SetTooltip(L("creation-add-keyframe-at-current-time")); }
+        if (key is not null && !Session.PoseEditing) { ImGui.SameLine(); if (KeyButton()) Run(key); if (ImGui.IsItemHovered()) ImGui.SetTooltip(L("creation-add-keyframe-at-current-time")); }
         float spacing = Math.Max(4, ImGui.GetStyle().ItemSpacing.X);
         float width = Math.Max(18, (ImGui.GetContentRegionAvail().X - 2 * spacing) / 3);
         double[] v = [value.X, value.Y, value.Z]; string[] axes = ["X", "Y", "Z"];
@@ -98,36 +98,95 @@ internal sealed partial class DirectorCreationWorkspace
             if (i > 0) ImGui.SameLine(0, spacing);
             ImGui.SetNextItemWidth(width);
             bool changed = DirectorImGuiNumeric.TransformDouble("##" + axes[i], ref v[i], step, colors[i], axes[i], out bool finished);
-            Widget(label, changed, () => set(new(v[0], v[1], v[2])), finished);
+            Widget(label, changed, () => set(new(v[0], v[1], v[2])), finished, poseOnly);
         }
         ImGui.PopID();
+    }
+    private void DrawTransformRow(string label, CreationVector value, Action<CreationVector> set, float step, Action? key, bool poseOnly)
+    {
+        bool showKey = key is not null && !Session.PoseEditing;
+        float available = ImGui.GetContentRegionAvail().X;
+        ImGui.PushStyleVar(ImGuiStyleVar.CellPadding, new Vector2(3, 3) * DirectorImGuiTheme.Scale);
+        if (ImGui.BeginTable("axes", showKey ? 5 : 4, ImGuiTableFlags.SizingStretchSame | ImGuiTableFlags.NoPadOuterX | ImGuiTableFlags.NoSavedSettings))
+        {
+            float labelWidth = new[] { "creation-position", "creation-world-position", "creation-rotation", "creation-scale", "creation-pivot" }
+                .Max(name => ImGui.CalcTextSize(L(name)).X);
+            labelWidth = Math.Min(labelWidth, Math.Max(1, available * .25f));
+            ImGui.TableSetupColumn("label", ImGuiTableColumnFlags.WidthFixed, labelWidth);
+            for (int i = 0; i < 3; i++) ImGui.TableSetupColumn("XYZ"[i].ToString(), ImGuiTableColumnFlags.WidthStretch, 1);
+            if (showKey) ImGui.TableSetupColumn("key", ImGuiTableColumnFlags.WidthFixed, ImGui.GetFrameHeight());
+            ImGui.TableNextColumn();
+            ImGui.AlignTextToFramePadding();
+            string display = label;
+            float textWidth = Math.Max(1, ImGui.GetContentRegionAvail().X);
+            while (display.Length > 0 && ImGui.CalcTextSize(display).X > textWidth)
+            {
+                string prefix = display.EndsWith('…') ? display[..^1] : display;
+                display = prefix.Length > 1 ? prefix[..^1] + "…" : "";
+            }
+            ImGui.TextUnformatted(display);
+            if (display != label && ImGui.IsItemHovered()) ImGui.SetTooltip(label);
+            double[] v = [value.X, value.Y, value.Z];
+            uint[] colors = [0xff5c5ce8, 0xff77cb65, 0xffe8a35c];
+            for (int i = 0; i < 3; i++)
+            {
+                ImGui.TableNextColumn();
+                ImGui.SetNextItemWidth(Math.Max(1, ImGui.GetContentRegionAvail().X));
+                bool changed = DirectorImGuiNumeric.TransformDouble("##" + "XYZ"[i], ref v[i], step, colors[i], "XYZ"[i].ToString(), out bool finished);
+                Widget(label, changed, () => set(new(v[0], v[1], v[2])), finished, poseOnly);
+            }
+            if (showKey)
+            {
+                ImGui.TableNextColumn();
+                if (KeyButton()) Run(key!);
+                if (ImGui.IsItemHovered()) ImGui.SetTooltip(L("creation-add-keyframe-at-current-time"));
+            }
+            ImGui.EndTable();
+        }
+        ImGui.PopStyleVar();
     }
     private void DrawProperties()
     {
         if (Project is null) return;
+        if(projectionScene is not null&&Session.SelectedObject==projectionObject){DrawProjectionProperties();return;}
         if (modelContext.Length > 0) { Hint(L("creation-shared-model")); DrawModelProperties(); return; }
-        if (SelectedAnimation is { } animation && Header(L("creation-action-settings")))
-        {
-            TextField(L("creation-animation-name"), animation.Name, v => animation.Name = v);
-            Number(L("creation-animation-duration"), animation.Duration, v => animation.Duration = v, .034, 86400);
-            Toggle(L("creation-loop-animation"), animation.Loop, v => animation.Loop = v);
-        }
+        if(IsIkControl(Session.SelectedObject)) { DrawPoseInspector(true);return; }
+        if(PosePicking && RigActor is not null) { DrawPoseInspector(false);return; }
         DrawObjectProperties();
+    }
+    private IReadOnlyList<string>? exportIssues;
+    private long exportCheckRevision = -1, exportCheckGeneration = -1;
+    private void DrawBackgroundSettings()
+    {
+        if (Project is not { } project) return;
+        ImGui.SeparatorText(L("creation-background-source"));
+        ImGui.TextWrapped(Runtime.BackgroundStatus);
+        ImGui.BeginDisabled(owner.ActiveReplayId == Guid.Empty);
+        if (Button(L("creation-link-current-replay-as-background"))) Run(Runtime.LinkCurrentBackground);
+        ImGui.EndDisabled();
+        if (project.BackgroundReplayId != Guid.Empty)
+        {
+            if (Button(L("creation-load-background"))) Run(Runtime.LoadLinkedBackground);
+            if (project.BackgroundClipId == Guid.Empty)
+                TimeNumber(L("creation-background-replay-offset"), project.BackgroundOffset, v => project.BackgroundOffset = v, -1e8, 1e8);
+            else Hint(L("creation-background-clip-timing") + project.Clips.Find(c => c.Id == project.BackgroundClipId)?.Name);
+        }
+        if (Button(L("creation-use-current-world"))) Run(Runtime.UseCurrentWorld);
+        if (project.Performances.Values.Any(t => t.WorldSource.Length > 0)
+            && Button(L("creation-use-recorded-world"))) Run(Runtime.UseRecordedWorld);
     }
     private void DrawProjectSettings(bool output)
     {
         if (Project is not { } project) return;
+        DrawBackgroundSettings();
         if (!output)
         {
                 TextField(L("creation-project-name"), project.Name, v => project.Name = v);
                 TextField(L("creation-category-folder"), project.Folder, v => project.Folder = v);
-                Number(L("creation-duration-seconds"), project.Duration, v => { project.Duration = v; project.LoopStart = Math.Min(project.LoopStart, v - .001); project.LoopEnd = Math.Min(project.LoopEnd, v); Session.Seek(Session.Time); }, .1, 86400);
-                VectorField(L("creation-scene-origin"), project.Origin, v => project.Origin = v);
-                Number(L("creation-loop-start"), project.LoopStart, v => project.LoopStart = v, 0, project.LoopEnd - .001);
-                Number(L("creation-loop-end"), project.LoopEnd, v => project.LoopEnd = v, project.LoopStart + .001, project.Duration);
-                Number(L("creation-background-replay-offset"), project.BackgroundOffset, v => project.BackgroundOffset = v);
-                if (Button(L("creation-link-current-replay-as-background"))) Session.Edit(L("creation-link-background-replay"), p => p.BackgroundReplayId = owner.ActiveReplayId);
-                if (Button(L("creation-unlink-background-replay"))) Session.Edit(L("creation-unlink-background-replay"), p => p.BackgroundReplayId = Guid.Empty);
+                TimeNumber(L("creation-duration"), project.Duration, v => { project.Duration = v; project.LoopStart = Math.Min(project.LoopStart, v - .001); project.LoopEnd = Math.Min(project.LoopEnd, v); Session.Seek(Session.Time); }, DirectorCreationTiming.FrameDuration, 86400);
+                VectorField(L("creation-scene-origin"), project.Origin-GameCoordinateOrigin, v => project.Origin = v+GameCoordinateOrigin);
+                TimeNumber(L("creation-loop-start"), project.LoopStart, v => project.LoopStart = v, 0, project.LoopEnd - .001);
+                TimeNumber(L("creation-loop-end"), project.LoopEnd, v => project.LoopEnd = v, project.LoopStart + .001, project.Duration);
             return;
         }
                 ImGui.SeparatorText(L("creation-video-output"));
@@ -137,11 +196,26 @@ internal sealed partial class DirectorCreationWorkspace
                 Number(L("creation-quality-crf"), project.Output.Quality, v => project.Output.Quality = (int)v, 0, 51, 1);
                 TextField(L("creation-encoder"), project.Output.Encoder, v => project.Output.Encoder = v);
                 TextField(L("creation-output-directory"), project.Output.Directory, v => project.Output.Directory = v);
+                ImGui.BeginDisabled(!Runtime.HasSceneAudioSource);
                 Toggle(L("creation-mix-background-replay-audio"), project.Output.SceneAudio, v => project.Output.SceneAudio = v);
+                ImGui.EndDisabled();
+                if (!Runtime.HasSceneAudioSource) Hint(L("creation-world-audio-note"));
+                ImGui.SeparatorText(L("creation-export-dependencies"));
+                Hint(L("creation-export-dependencies-note"));
+                if (Button(L("creation-check-resources"))) Run(() =>
+                {
+                    exportIssues = Runtime.CheckExportResources();
+                    exportCheckRevision = Session.Revision; exportCheckGeneration = Session.DocumentGeneration;
+                });
+                if (exportCheckRevision != Session.Revision || exportCheckGeneration != Session.DocumentGeneration) exportIssues = null;
+                if (exportIssues is { Count: 0 }) Hint(L("creation-export-resources-ready"));
+                else if (exportIssues is not null) foreach (string issue in exportIssues) ImGui.TextWrapped(issue);
                 Checkbox(L("creation-include-textures-in-model-export"), ref exportTextures);
                 if (Button(L("creation-save-project"))) Continue(Session.Save);
-                if (Button(L("creation-screenshot-145"))) FileDialog(L("creation-save-screenshot"), Runtime.Screenshot, "frame.png");
-                if (Button(L("creation-export-video-146"))) FileDialog(L("creation-export-video"), ExportProject, "film.mp4");
+                SameLineIfFits(L("creation-screenshot-145"));
+            if (Button(L("creation-screenshot-145"))) FileDialog(L("creation-save-screenshot"), Runtime.Screenshot, "frame.png");
+                SameLineIfFits(L("creation-export-video-146"));
+            if (Button(L("creation-export-video-146"))) FileDialog(L("creation-export-video"), ExportProject, "film.mp4");
     }
     private CreationTransform EvaluatedTransform(CreationSceneObject obj)
     {
@@ -162,89 +236,128 @@ internal sealed partial class DirectorCreationWorkspace
     }
     private void SetTransform(CreationSceneObject obj, CreationTransform transform)
     {
+        if(Session.SelectedPart!=Guid.Empty && selectedBones.Count>1 && Session.Frame?.Objects.GetValueOrDefault(obj.Id) is {} state)
+        {
+            var original=state.Pose.GetValueOrDefault(Session.SelectedPart)??new();
+            foreach(var part in selectedBones.Where(id=>id!=Session.SelectedPart))
+            {
+                var value=state.Pose.GetValueOrDefault(part)??new();
+                Session.SetTransform(obj.Id,part,value with {Position=value.Position+(transform.Position-original.Position),Rotation=value.Rotation+(transform.Rotation-original.Rotation),Scale=value.Scale+(transform.Scale-original.Scale),Pivot=value.Pivot+(transform.Pivot-original.Pivot)});
+            }
+        }
         Session.SetTransform(obj.Id, Session.SelectedPart, transform);
     }
-    private void DrawObjectProperties()
+    private CreationVector GameCoordinateOrigin
     {
-        if (Project is not { } project) return;
-        if (SelectedObject is not { } obj) { Hint(L("creation-no-selection")); if (Button(L("creation-project-settings"))) auxiliary = "settings"; return; }
-        TextField(L("creation-name"), obj.Name, v => obj.Name = v);
-        Hint(Session.SelectedPart == Guid.Empty ? L("creation-object-transform") : L("creation-bone-pose") + SelectedPart?.Name);
+        get { var spawn=api.World?.DefaultSpawnPosition?.AsBlockPos;return spawn is null?default:new(spawn.X,0,spawn.Z); }
+    }
+    private void DrawRigTransform(CreationSceneObject obj, Guid part, bool positionOnly = false)
+    {
+        var project = Project!;
+        void Transform(CreationTransform value) { if(part!=Guid.Empty && part==Session.SelectedPart)SetTransform(obj,value);else Session.SetTransform(obj.Id,part,value); }
+        void Key(CreationChannel channel, CreationVector value) => Session.Edit(L("creation-add-keyframe-at-current-time"), _ => Session.WriteKey(obj.Id, part, channel, value));
         // Edit the evaluated pose, with an explicit preview draft until the user inserts keys.
-        var tr = EvaluatedTransform(obj);
-        bool worldPosition = Session.SelectedPart == Guid.Empty && obj.ParentId == Guid.Empty;
-        var origin = worldPosition ? project.Origin : default;
-        VectorField(L(worldPosition ? "creation-world-position" : "creation-position"), tr.Position + origin, v => SetTransform(obj, tr with { Position = v - origin }), .1f, () => AddKey(CreationChannel.Position, tr.Position));
-        VectorField(L("creation-rotation"), tr.Rotation, v => SetTransform(obj, tr with { Rotation = v }), 1, () => AddKey(CreationChannel.Rotation, tr.Rotation));
-        VectorField(L("creation-scale"), tr.Scale, v => SetTransform(obj, tr with { Scale = v }), .01f, () => AddKey(CreationChannel.Scale, tr.Scale));
-        VectorField(L("creation-pivot"), tr.Pivot, v => SetTransform(obj, tr with { Pivot = v }), .1f, () => AddKey(CreationChannel.Pivot, tr.Pivot));
-        Hint(L("creation-drag-to-adjust-ctrl-fine-shift-faster"));
-        if (Session.HasTransformDraft)
+        var tr = (!Session.AnimationEditing ? (part==Guid.Empty?obj.Transform:obj.Pose.GetValueOrDefault(part)??new()) : Session.Frame?.Objects.GetValueOrDefault(obj.Id) is { } state ? (part == Guid.Empty ? state.Transform : state.Pose.GetValueOrDefault(part) ?? new()) : (part == Guid.Empty ? obj.Transform : obj.Pose.GetValueOrDefault(part) ?? new()));
+        bool worldPosition = part == Guid.Empty && obj.ParentId == Guid.Empty && obj.BindingSpace is null;
+        var origin = worldPosition ? project.Origin-GameCoordinateOrigin : default;
+        bool connected=Session.PoseEditing && part!=Guid.Empty && !freePoseTransform;
+        bool poseOnly = Session.PoseEditing && part != Guid.Empty && obj.Id == Session.PoseActor;
+        ImGui.BeginDisabled(connected);
+        VectorField(L(worldPosition ? "creation-world-position" : "creation-position"), tr.Position + origin, v => Transform(tr with { Position = v - origin }), .1f, () => Key(CreationChannel.Position, tr.Position), inline: true, poseOnly: poseOnly);
+        ImGui.EndDisabled();
+        if (!positionOnly)
+        {
+        VectorField(L("creation-rotation"), tr.Rotation, v => Transform(tr with { Rotation = v }), 1, () => Key(CreationChannel.Rotation, tr.Rotation), inline: true, poseOnly: poseOnly);
+        ImGui.BeginDisabled(connected);
+        VectorField(L("creation-scale"), tr.Scale, v => Transform(tr with { Scale = v }), .01f, () => Key(CreationChannel.Scale, tr.Scale), inline: true, poseOnly: poseOnly);
+        VectorField(L("creation-pivot"), tr.Pivot, v => Transform(tr with { Pivot = v }), .1f, () => Key(CreationChannel.Pivot, tr.Pivot), inline: true, poseOnly: poseOnly);
+        ImGui.EndDisabled();
+        }
+        if (Session.HasTransformDraft && !Session.PoseEditing)
         {
             ImGui.TextWrapped(L("creation-unrecorded"));
             if (Button(L("creation-record-preview"))) Run(Session.CommitTransformDrafts);
             SameLineIfFits(L("creation-revert-preview")); if (Button(L("creation-revert-preview"))) Session.ClearTransformDrafts();
         }
-        if (Button(L("creation-add-transform-keys-from-preview-pose")))
+        if (!Session.PoseEditing && Button(L("creation-add-transform-keys-from-preview-pose")))
         {
-            var current = EvaluatedTransform(obj); AddKey(CreationChannel.Position, current.Position); AddKey(CreationChannel.Rotation, current.Rotation); AddKey(CreationChannel.Scale, current.Scale);
+            Run(()=>Session.RecordTransformKeys(obj.Id,part,positionOnly));
         }
+    }
+    private void DrawObjectProperties()
+    {
+        if (Project is not { } project) return;
+        if ((SelectedObject ?? RigActor) is not { } obj) { Hint(L("creation-no-selection")); return; }
         var evaluated = Session.Frame?.Objects.GetValueOrDefault(obj.Id);
-        bool visible = Session.SelectedPart == Guid.Empty ? evaluated?.Visible ?? obj.Visible : !(evaluated?.HiddenParts ?? obj.HiddenParts).Contains(Session.SelectedPart);
-        Toggle(L("creation-visible"), visible, v => Session.SetProperty(obj.Id, Session.SelectedPart, CreationChannel.Visible, new(v ? 1 : 0, 0, 0), () => { if (Session.SelectedPart == Guid.Empty) obj.Visible = v; else if (v) obj.HiddenParts.Remove(Session.SelectedPart); else obj.HiddenParts.Add(Session.SelectedPart); }));
-        ImGui.SameLine(); if (KeyButton("visible")) AddKey(CreationChannel.Visible, new(visible ? 1 : 0, 0, 0));
-        if (Session.SelectedPart != Guid.Empty) { if (Button(L("creation-return-to-object-transform"))) Continue(() => Session.SelectedPart = Guid.Empty); return; }
-        if (obj.Kind == CreationObjectKind.Model)
+        if(!drawingContentInspector)DrawEditingContext();
+        if(ObjectSectionVisible("transform"))
         {
-            DrawActorRig(obj);
-            if (Button(L("creation-edit-selected-model"))) Continue(() => { Session.LeaveAnimation(); modelId = obj.ModelId; modelContext = "model"; });
-            if (Button(L("creation-new-animation"))) Ask(L("creation-animation-name"), NewAnimation);
-            if (Button(L("creation-apply-preset"))) auxiliary = "presets";
+        TextField(L("creation-name"), obj.Name, v => obj.Name = v);
+        Hint(L("creation-object-transform"));
+        ImGui.BeginDisabled(PartScope);
+        DrawRigTransform(obj, Guid.Empty);
+        ImGui.EndDisabled();
+        bool visible = Session.AnimationEditing ? evaluated?.Visible ?? obj.Visible : obj.Visible;
+        Toggle(L("creation-visible"), visible, v => Session.SetProperty(obj.Id, Guid.Empty, CreationChannel.Visible, new(v ? 1 : 0, 0, 0), () => obj.Visible = v));
         }
-        if (Header(L("creation-appearance")))
+        if (ObjectSectionVisible("type") && obj.Kind == CreationObjectKind.Model)
         {
-        Vector3 color = (evaluated?.Color ?? obj.Color).Float();
-        ImGui.TextUnformatted(L("creation-color")); ImGui.SetNextItemWidth(-1);
+            DrawActorActionPicker(obj);
+            DrawActorRig(obj);
+            if (Button(L("creation-edit-selected-model"))) Continue(() => { Session.LeaveAnimation(); Session.SelectedObject = obj.Id; Session.SelectedPart = Guid.Empty; modelId = obj.ModelId; modelContext = "model"; });
+            if (Button(L("creation-apply-preset"))) Continue(() => { Session.SelectedObject = obj.Id; Session.SelectedPart = Guid.Empty; auxiliary = "presets"; });
+        }
+        if (ObjectSectionVisible("appearance") && Header(L("creation-appearance")))
+        {
+        Vector3 color = (Session.AnimationEditing ? evaluated?.Color ?? obj.Color : obj.Color).Float();
+        ImGui.TextUnformatted(L("creation-color")); ImGui.SetNextItemWidth(Math.Max(1,ImGui.GetContentRegionAvail().X-ImGui.GetFrameHeight()-ImGui.GetStyle().ItemSpacing.X));
         bool changed = ImGui.ColorEdit3("##object-color", ref color); Widget(L("creation-color"), changed, () => Session.SetProperty(obj.Id, Guid.Empty, CreationChannel.Color, CreationVector.From(color), () => obj.Color = CreationVector.From(color)));
-        if (ImGui.SmallButton(L("creation-color-keyframe"))) AddKey(CreationChannel.Color, CreationVector.From(color));
+        ImGui.SameLine();if (KeyButton("color-key")) Session.Edit(L("creation-color-keyframe"), _ => Session.WriteKey(obj.Id, Guid.Empty, CreationChannel.Color, CreationVector.From(color)));
+        if(ImGui.IsItemHovered())ImGui.SetTooltip(L("creation-color-keyframe"));
         Number(L("creation-opacity"), obj.Opacity, v => obj.Opacity = v, 0, 1, .01f); Number(L("creation-glow"), obj.Glow, v => obj.Glow = v, 0, 1, .01f);
         }
-        if (Header(L("creation-group-target-binding")))
+        if (ObjectSectionVisible("binding") && Header(L("creation-group-target-binding")))
         {
             if (Combo(L("creation-parent-object"), project.Objects.Find(o => o.Id == obj.ParentId)?.Name ?? L("creation-world")))
             {
-                if (ImGui.Selectable(L("creation-world"), obj.ParentId == Guid.Empty)) Session.Edit(L("creation-remove-parent"), _ => { obj.ParentId = obj.ParentPartId = Guid.Empty; });
+                if (ImGui.Selectable(L("creation-world"), obj.ParentId == Guid.Empty)) Run(() => Session.Reparent(obj.Id, Guid.Empty));
                 foreach (var other in project.Objects.Where(o => o.Id != obj.Id))
-                    if (ImGui.Selectable(other.Name + "##" + other.Id, other.Id == obj.ParentId)) Run(() => Session.Edit(L("creation-set-parent"), p => { obj.ParentId = other.Id; obj.ParentPartId = Guid.Empty; p.Validate(); }));
+                    if (ImGui.Selectable(other.Name + "##" + other.Id, other.Id == obj.ParentId)) Run(() => Session.Reparent(obj.Id, other.Id));
                 ImGui.EndCombo();
             }
             var parent = project.Objects.Find(o => o.Id == obj.ParentId);
             var parentModel = project.Models.Find(m => m.Id == parent?.ModelId);
             if (parentModel is not null && Combo(L("creation-attachment-bone"), parentModel.Parts.Find(p => p.Id == obj.ParentPartId)?.Name ?? L("creation-object-origin")))
             {
-                if (ImGui.Selectable(L("creation-object-origin"))) Session.Edit(L("creation-change-attachment"), _ => obj.ParentPartId = Guid.Empty);
-                foreach (var part in parentModel.Parts) if (ImGui.Selectable(part.Name + "##" + part.Id)) Session.Edit(L("creation-change-attachment"), _ => obj.ParentPartId = part.Id);
+                if (ImGui.Selectable(L("creation-object-origin"), obj.ParentPartId == Guid.Empty)) Run(() => Session.Reparent(obj.Id, obj.ParentId));
+                foreach (var part in parentModel.Parts) if (ImGui.Selectable(part.Name + "##" + part.Id, obj.ParentPartId == part.Id)) Run(() => Session.Reparent(obj.Id, obj.ParentId, part.Id));
                 ImGui.EndCombo();
             }
-            if (Combo(L("creation-target"), project.Objects.Find(o => o.Id == obj.TargetId)?.Name ?? L("creation-none")))
+            if (obj.Kind==CreationObjectKind.Camera && obj.CameraMode is CreationCameraMode.Follow or CreationCameraMode.LookAt or CreationCameraMode.Orbit && Combo(L("creation-target"), project.Objects.Find(o => o.Id == obj.TargetId)?.Name ?? L("creation-none")))
             {
                 if (ImGui.Selectable(L("creation-none"))) Session.Edit(L("creation-clear-target"), _ => obj.TargetId = Guid.Empty);
                 foreach (var other in project.Objects.Where(o => o.Id != obj.Id)) if (ImGui.Selectable(other.Name + "##" + other.Id)) Session.Edit(L("creation-set-target"), _ => obj.TargetId = other.Id);
                 ImGui.EndCombo();
             }
         }
+        if(!ObjectSectionVisible("type"))
+        {
+            if(drawingContentInspector && contentView.Section=="object.transform" && obj.Projection is not null)DrawBlueprintTransforms(obj);
+            return;
+        }
         if (obj.Kind == CreationObjectKind.Camera)
         {
             ImGui.SeparatorText(L("creation-camera"));
             if (Button(project.CameraId == obj.Id ? L("creation-current-shooting-camera") : L("creation-use-as-shooting-camera"))) Session.Edit(L("creation-select-shooting-camera"), p => p.CameraId = obj.Id);
+            SameLineIfFits(L("creation-set-from-observer-view"));
             if (Button(L("creation-set-from-observer-view"))) Runtime.CaptureCamera(obj);
+            SameLineIfFits(L("creation-open-camera-preview"));
             if (Button(L("creation-open-camera-preview"))) Runtime.Preview = true;
             Choice(L("creation-camera-mode"), obj.CameraMode, v => obj.CameraMode = v, [L("creation-keyframes-fixed"), L("creation-linear-motion"), L("creation-path"), L("creation-follow"), L("creation-look-at"), L("creation-orbit")]);
-            double fov = evaluated?.Fov ?? obj.Fov;
-            Number(L("creation-field-of-view"), fov, v => Session.SetProperty(obj.Id, Guid.Empty, CreationChannel.Fov, new(v, 0, 0), () => obj.Fov = v), 1, 170, 1);
-            if (ImGui.SmallButton(L("creation-fov-keyframe"))) AddKey(CreationChannel.Fov, new(fov, 0, 0));
-            Number(L("creation-orbit-radius"), obj.OrbitRadius, v => obj.OrbitRadius = v, .01, 10000);
-            Number(L("creation-orbit-speed"), obj.OrbitSpeed, v => obj.OrbitSpeed = v, -360, 360, 1);
+            double fov = Session.AnimationEditing ? evaluated?.Fov ?? obj.Fov : obj.Fov;
+            Number(L("creation-field-of-view"), fov, v => Session.SetProperty(obj.Id, Guid.Empty, CreationChannel.Fov, new(v, 0, 0), () => obj.Fov = v), 1, 170, 1, () => AddKey(CreationChannel.Fov, new(fov, 0, 0)));
+            if(obj.CameraMode==CreationCameraMode.Orbit) { Number(L("creation-orbit-radius"), obj.OrbitRadius, v => obj.OrbitRadius = v, .01, 10000);
+            Number(L("creation-orbit-speed"), obj.OrbitSpeed, v => obj.OrbitSpeed = v, -360, 360, 1); }
             Number(L("creation-camera-shake"), obj.Shake, v => obj.Shake = v, 0, 30, .1f);
             if (obj.CameraMode is CreationCameraMode.Linear or CreationCameraMode.Path) ImGui.TextWrapped(L("creation-use-position-keys-for-path-points-choose-linear-interpolation-for-stra"));
         }
@@ -257,19 +370,14 @@ internal sealed partial class DirectorCreationWorkspace
         }
         if (obj.Kind == CreationObjectKind.Particle)
         {
-            static string ParticleName(string code) => code switch { "smoke" => L("creation-smoke"), "snow" => L("creation-snow"), "glow" => L("creation-glow-particles"), _ => L("creation-sparks") };
-            if (Combo(L("creation-particle-preset"), ParticleName(obj.ResourceCode)))
-            { foreach (string preset in new[] { "smoke", "sparks", "snow", "glow" }) if (ImGui.Selectable(ParticleName(preset))) Session.Edit(L("creation-select-particles"), _ => obj.ResourceCode = preset); ImGui.EndCombo(); }
-            Toggle(L("creation-use-game-particles-during-playback"), obj.NativeParticles, v => obj.NativeParticles = v);
-            Hint(L("creation-seeking-and-frame-export-use-repeatable-particle-previews-motion-may-d"));
-            Number(L("creation-start-time"), obj.ParticleStart, v => obj.ParticleStart = v, 0, project.Duration);
-            Number(L("creation-emission-duration"), obj.ParticleDuration, v => obj.ParticleDuration = v, .01, 86400);
-            Number(L("creation-particles-per-second"), obj.ParticleCount, v => obj.ParticleCount = (int)v, 1, 1000, 1);
-            Number(L("creation-particle-lifetime"), obj.ParticleLife, v => obj.ParticleLife = v, .05, 30);
+            DrawProjectionParticleSource(obj);
+            if(Button(L("creation-particle-editor")))NavigateContent("p.overview");
         }
         if (obj.Kind == CreationObjectKind.Item)
         {
-            TextField(L("creation-item-block-code"), obj.ResourceCode, v => obj.ResourceCode = v.Trim());
+            if (obj.ActorHand is 1 or 2)
+                Toggle(L("creation-use-recorded-hand-item"), obj.UseRecordedHandItem, v => obj.UseRecordedHandItem = v);
+            TextField(L("creation-item-block-code"), obj.ResourceCode, v => { obj.ResourceCode = v.Trim(); obj.ItemStackData = []; obj.UseRecordedHandItem = false; });
             if (obj.ResourceCode.Length > 0)
             {
                 try { Runtime.ValidateItem(obj.ResourceCode); ImGui.TextColored(new System.Numerics.Vector4(.35f, .85f, .45f, 1), L("creation-game-resource-found")); }
@@ -277,7 +385,8 @@ internal sealed partial class DirectorCreationWorkspace
             }
             Hint(L("creation-use-game-item-or-block-codes-meshes-use-the-game-s-textures"));
         }
-        if (obj.Kind == CreationObjectKind.Structure)
+        if(obj.Projection is not null)DrawBlueprintProperties(obj);
+        if (obj.Kind == CreationObjectKind.Structure && obj.Projection is null)
         {
             ImGui.TextWrapped(L("creation-structure-block-count", obj.Blocks.Count));
             if (Button(L("creation-capture-new-structure"))) Run(() => { structureFirst = Runtime.SelectedBlock(); structureCapture = true; });

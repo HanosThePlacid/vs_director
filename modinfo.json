@@ -7,11 +7,11 @@
   "authors": [
     "HansJack (VSCN-Studio)"
   ],
-  "version": "1.0.4-pre.9",
+  "version": "1.0.4-pre.10",
   "side": "universal",
+  "requiredOnServer": false,
   "dependencies": {
     "vsimgui": "1.2.7",
     "game": "1.22.3"
-  },
-  "requiredOnServer": false
+  }
 }

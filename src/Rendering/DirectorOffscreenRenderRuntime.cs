@@ -2,6 +2,9 @@ using HarmonyLib;
 using Vintagestory.API.Client;
 using Vintagestory.API.Common;
 using Vintagestory.Client.NoObf;
+using System.Linq.Expressions;
+using Vintagestory.API.MathTools;
+using VSDirector.Compatibility;
 
 namespace VSDirector.Rendering;
 
@@ -93,25 +96,60 @@ internal static class DirectorOffscreenPlayerAnimationManagerPatch
 // culler. A second camera can face chunks hidden in those buffers. Evaluate its
 // own frustum/range without changing the buffers or FrustumVisible, which are
 // still needed by the editor and the next normal frame.
-[HarmonyPatch(typeof(ModelDataPoolLocation), nameof(ModelDataPoolLocation.IsVisible))]
+[HarmonyPatch(typeof(MeshDataPool), nameof(MeshDataPool.FrustumCull))]
 internal static class DirectorOffscreenTerrainVisibilityPatch
 {
+    private static readonly System.Func<ModelDataPoolLocation, bool> Hidden = DirectorGameCompatibility.Getter<ModelDataPoolLocation, bool>("Hide");
+    private static readonly System.Func<ModelDataPoolLocation, int> Lod = DirectorGameCompatibility.Getter<ModelDataPoolLocation, int>("LodLevel");
+    private static readonly System.Func<FrustumCulling, Sphere, int, bool> InRange = CreateRangeTest();
+
     [HarmonyPrefix]
-    private static bool Prefix(ModelDataPoolLocation __instance, EnumFrustumCullMode mode,
-        FrustumCulling culler, ref bool __result)
+    private static bool Prefix(MeshDataPool __instance, FrustumCulling? __0, EnumFrustumCullMode __1,
+        List<ModelDataPoolLocation> ___poolLocations)
     {
         if (DirectorOffscreenRenderRuntime.CurrentView is not { } view) return true;
-        __result = view.RenderTerrain && !__instance.Hide && mode switch
+        // The native pool writes camera-specific visibility flags in both
+        // versions. Build only the draw groups for this camera, leaving all
+        // native occlusion/FrustumVisible flags untouched.
+        __instance.indicesGroupsCount = __instance.RenderedTriangles = __instance.AllocatedTris = 0;
+        foreach (var location in ___poolLocations)
         {
-            EnumFrustumCullMode.CullNormal => culler.InFrustumAndRange(
-                __instance.FrustumCullSphere, false, __instance.LodLevel),
-            EnumFrustumCullMode.CullInstant => culler.InFrustum(__instance.FrustumCullSphere),
-            EnumFrustumCullMode.CullInstantShadowPassNear => culler.InFrustumShadowPass(__instance.FrustumCullSphere),
-            EnumFrustumCullMode.CullInstantShadowPassFar => __instance.LodLevel >= 1
-                && culler.InFrustumShadowPass(__instance.FrustumCullSphere),
+            int count = location.IndicesEnd - location.IndicesStart;
+            __instance.AllocatedTris += count / 3;
+            if (!view.RenderTerrain || !IsVisible(location, __0, __1)) continue;
+            int group = __instance.indicesGroupsCount++;
+            __instance.indicesStartsByte[group * 2] = location.IndicesStart * sizeof(int);
+            __instance.indicesSizes[group] = count;
+            __instance.RenderedTriangles += count / 3;
+        }
+        return false;
+    }
+
+    internal static bool IsVisible(ModelDataPoolLocation location, FrustumCulling? culler, EnumFrustumCullMode mode)
+    {
+        if (Hidden(location)) return false;
+        if (culler is null) return true;
+        return mode switch
+        {
+            EnumFrustumCullMode.CullNormal => InRange(culler, location.FrustumCullSphere, Lod(location)),
+            EnumFrustumCullMode.CullInstant => culler.InFrustum(location.FrustumCullSphere),
+            EnumFrustumCullMode.CullInstantShadowPassNear => culler.InFrustumShadowPass(location.FrustumCullSphere),
+            EnumFrustumCullMode.CullInstantShadowPassFar => Lod(location) >= 1
+                && culler.InFrustumShadowPass(location.FrustumCullSphere),
             _ => true
         };
-        return false;
+    }
+
+    private static System.Func<FrustumCulling, Sphere, int, bool> CreateRangeTest()
+    {
+        var culler = Expression.Parameter(typeof(FrustumCulling));
+        var sphere = Expression.Parameter(typeof(Sphere));
+        var lod = Expression.Parameter(typeof(int));
+        var method = typeof(FrustumCulling).GetMethod("InFrustumAndRange", [typeof(Sphere), typeof(int)])
+            ?? typeof(FrustumCulling).GetMethod("InFrustumAndRange", [typeof(Sphere), typeof(bool), typeof(int)])
+            ?? throw new MissingMethodException(typeof(FrustumCulling).FullName, "InFrustumAndRange");
+        Expression[] arguments = method.GetParameters().Length == 2 ? [sphere, lod] : [sphere, Expression.Constant(false), lod];
+        return Expression.Lambda<System.Func<FrustumCulling, Sphere, int, bool>>(Expression.Call(culler, method, arguments), culler, sphere, lod).Compile();
     }
 }
 

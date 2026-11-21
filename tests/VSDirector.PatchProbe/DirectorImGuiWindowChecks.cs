@@ -46,6 +46,7 @@ internal static partial class DirectorImGuiProbe
 
     private static void CheckExportAndFooterWindows(Assembly assembly, ICoreClientAPI api, Action<string> capture)
     {
+        CheckReplayExportFailureStatus(assembly);
         Type Runtime(string name) => assembly.GetType("VSDirector.Gui." + name, true)!;
         object? Call(object instance, string name, params object?[] args)
             => AccessTools.Method(instance.GetType(), name, args.Select(a => a!.GetType()).ToArray()).Invoke(instance, args);
@@ -158,6 +159,51 @@ internal static partial class DirectorImGuiProbe
                 }
                 Call(settings, "Close");
             }
+            string originalLanguage = Lang.CurrentLocale;
+            try
+            {
+                var pageType = Runtime("DirectorSettingsDialog").GetNestedType("SettingsPage", BindingFlags.NonPublic)!;
+                var draft = (DirectorConfig)AccessTools.Field(settings.GetType(), "draft").GetValue(settings)!;
+                draft.FfmpegPath = "settings-draft-sentinel";
+                foreach (string language in new[] { "zh-cn", "en" })
+                foreach (float scale in new[] { 1f, 1.5f, 2f })
+                foreach (float width in new[] { 420f, 780f })
+                {
+                    LoadCreationProbeLanguage(language);
+                    RuntimeEnv.GUIScale = scale;
+                    io.DisplaySize = scale == 1 ? new Vector2(960, 640) : new Vector2(1920, 1440);
+                    Call(settings, "SelectCategory", Enum.Parse(pageType, "Offscreen"));
+                    foreach (string query in new[] { "", "FfmpegPath", "no-matching-setting-123" })
+                    {
+                        AccessTools.Field(settings.GetType(), "categorySearch").SetValue(settings, query);
+                        for (int frame = 0; frame < 3; frame++)
+                        {
+                            ImGui.NewFrame();
+                            using (var font = (IDisposable)AccessTools.Method(Runtime("DirectorImGuiRuntime"), "UseFont").Invoke(null, [false])!)
+                            {
+                                ImGui.SetNextWindowPos(new Vector2(8));
+                                ImGui.SetNextWindowSize(new Vector2(width, 590) * scale);
+                                ImGui.Begin("settings-layout-probe", ImGuiWindowFlags.NoSavedSettings | ImGuiWindowFlags.NoScrollbar);
+                                ImGui.SetWindowFontScale(scale);
+                                Call(settings, "OnDraw");
+                                var footerBottom = ImGui.GetItemRectMax();
+                                if (frame > 0 && (footerBottom.Y > ImGui.GetWindowPos().Y + ImGui.GetWindowSize().Y
+                                    || footerBottom.X > ImGui.GetWindowPos().X + ImGui.GetWindowSize().X || ImGui.GetScrollMaxY() > 1))
+                                    throw new Exception($"Global settings footer clipped/scrolled at {language}/{width}/{scale}: footer={footerBottom}, window={ImGui.GetWindowPos()}/{ImGui.GetWindowSize()}, scroll={ImGui.GetScrollMaxY()}");
+                                ImGui.End();
+                            }
+                            ImGui.Render();
+                        }
+                        if (scale == 1 && query.Length == 0) capture($"settings-{language}-{width}");
+                    }
+                    Call(settings, "SelectCategory", Enum.Parse(pageType, "Replay"));
+                    if ((string)AccessTools.Field(settings.GetType(), "categorySearch").GetValue(settings)! != ""
+                        || draft.FfmpegPath != "settings-draft-sentinel")
+                        throw new Exception("Category navigation lost draft edits or retained the previous search");
+                }
+            }
+            finally { Lang.ChangeLanguage(originalLanguage); }
+            Console.WriteLine("PASS global settings category navigation/search preserves drafts; wide/narrow bilingual layouts keep footer visible at 100/150/200%");
             Console.WriteLine("PASS FFmpeg-only export/minimum default width/reopen, settings drawing and pinned clickable footers with bottom-right resize at 100/150/200%");
         }
         finally
@@ -166,5 +212,30 @@ internal static partial class DirectorImGuiProbe
             io.MouseDown[0] = false; io.MousePos = new Vector2(-100);
             io.DisplaySize = savedDisplay; RuntimeEnv.GUIScale = savedScale;
         }
+    }
+
+    private static void CheckReplayExportFailureStatus(Assembly assembly)
+    {
+        var owner = new VSDirectorModSystem();
+        var managerType = assembly.GetType("VSDirector.Replay.DirectorReplayManager", true)!;
+        var exporterType = assembly.GetType("VSDirector.Replay.DirectorReplayMultiTrackExporter", true)!;
+        object manager = RuntimeHelpers.GetUninitializedObject(managerType);
+        object exporter = RuntimeHelpers.GetUninitializedObject(exporterType);
+        AccessTools.Field(exporterType, "statusLock").SetValue(exporter, new object());
+        AccessTools.Field(exporterType, "status").SetValue(exporter, "error");
+        const string failure = "FFmpeg executable 'missing-export-encoder.exe' was not found.";
+        AccessTools.Field(exporterType, "lastError").SetValue(exporter, failure);
+        AccessTools.Field(managerType, "exporter").SetValue(manager, exporter);
+        AccessTools.Field(managerType, "independentVoiceExportGate").SetValue(manager, new object());
+        AccessTools.Field(managerType, "independentVoiceExportStatus").SetValue(manager, "idle");
+        AccessTools.Field(typeof(VSDirectorModSystem), "replay").SetValue(owner, manager);
+        string text = (string)AccessTools.Method(typeof(VSDirectorModSystem), "ReplayExportStatusShortText").Invoke(owner, null)!;
+        if (!text.Contains(failure, StringComparison.Ordinal))
+            throw new Exception("Export initialization failure was hidden behind an empty output-track status: " + text);
+        AccessTools.Field(exporterType, "lastError").SetValue(exporter, "replay-export-range");
+        text = (string)AccessTools.Method(typeof(VSDirectorModSystem), "ReplayExportStatusShortText").Invoke(owner, null)!;
+        if (text != Lang.Get("vsdirector:replay-export-range"))
+            throw new Exception("Replay export error codes were not localized: " + text);
+        Console.WriteLine("PASS replay export initialization errors remain visible with zero output tracks, including localized validation errors");
     }
 }

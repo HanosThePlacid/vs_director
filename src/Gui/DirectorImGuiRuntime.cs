@@ -12,13 +12,11 @@ using VSImGui.API;
 
 namespace VSDirector.Gui;
 
-/// <summary>Initializes the single game viewport and fonts before VSImGui builds its atlas.</summary>
+/// <summary>Uses the game's default ImGui font and merges editor icons before texture upload.</summary>
 internal static class DirectorImGuiRuntime
 {
     private static Harmony? initialization;
-    private static string fontPath = "";
-    private static ImFontPtr font;
-    private static bool fontLoaded;
+    private static string iconFontPath = "";
     private static nint iconRanges;
 
     internal static void Initialize(ICoreClientAPI api, Mod mod)
@@ -30,15 +28,19 @@ internal static class DirectorImGuiRuntime
         config.MultiViewportSupport = false;
         api.StoreModConfig(config, "imgui.json");
 
-        fontPath = Path.Combine(((ModContainer)mod).FolderPath, "assets", "vsdirector", "fonts", "noto", "NotoSansSC-Regular.ttf");
-        if (!File.Exists(fontPath)) throw new FileNotFoundException("VS Director Chinese font is missing", fontPath);
-        fontLoaded = false;
+        iconFontPath = Path.Combine(((ModContainer)mod).FolderPath, "assets", "vsdirector", "fonts", "tabler", "tabler-icons.ttf");
+        if (!File.Exists(iconFontPath)) throw new FileNotFoundException("VS Director icon font is missing", iconFontPath);
         initialization = new Harmony("vscn.vsdirector.imgui-initialization");
-        // This hook runs with a valid ImGui context, before the renderer uploads
-        // the font texture. One size keeps the full Chinese atlas bounded.
-        initialization.Patch(AccessTools.Method(AccessTools.TypeByName("VSImGui.Controller"), "LoadFonts"),
-            postfix: new HarmonyMethod(typeof(DirectorImGuiRuntime), nameof(LoadFont)));
+        InstallFontPatches(initialization);
         InstallBackendPatches(initialization);
+    }
+
+    internal static void InstallFontPatches(Harmony harmony)
+    {
+        // FontSettings rebuilds the shared atlas without calling LoadFonts.
+        // Merge icons on both initial creation and subsequent texture uploads.
+        harmony.Patch(AccessTools.Method(AccessTools.TypeByName("ImGuiController_OpenTK.ImGuiRenderer"), "RecreateFontDeviceTexture"),
+            prefix: new HarmonyMethod(typeof(DirectorImGuiRuntime), nameof(PrepareFontTexture)));
     }
 
     internal static void InstallBackendPatches(Harmony harmony)
@@ -75,7 +77,8 @@ internal static class DirectorImGuiRuntime
 
     private static bool PerformanceInput(ref bool __result)
     {
-        if (VSDirector.Runtime.DirectorCreationRuntime.Current?.ControllingActor != true) return true;
+        var creation = VSDirector.Runtime.DirectorCreationRuntime.Current;
+        if (creation?.ControllingActor != true && creation?.NativeAppearanceEditorOpen != true) return true;
         __result = false; return false;
     }
     private static void PerformanceMouseGrab(ref bool __result)
@@ -142,44 +145,64 @@ internal static class DirectorImGuiRuntime
         if (__instance.GetType().FullName == "VSImGui.VSImGuiDialog") __result = .85;
     }
 
-    private static void LoadFont()
+    private static unsafe void PrepareFontTexture()
     {
         ImGui.GetIO().ConfigFlags |= ImGuiConfigFlags.DockingEnable;
         var atlas = ImGui.GetIO().Fonts;
-        font = atlas.AddFontFromFileTTF(fontPath, DirectorImGuiTheme.FontSize, new ImFontConfigPtr(), atlas.GetGlyphRangesChineseFull());
-        string iconPath = Path.GetFullPath(Path.Combine(Path.GetDirectoryName(fontPath)!, "../tabler/tabler-icons.ttf"));
+        if (!atlas.IsBuilt() && !atlas.Build()) throw new InvalidOperationException("Game font atlas build failed.");
+        var font = CurrentDefaultFont();
+        if (font.NativePtr == null) return;
+        if (DirectorImGuiIcons.HasGlyphs(font))
+        {
+            DirectorImGuiIcons.CenterGlyphs(font);
+            return;
+        }
         if (iconRanges == 0) iconRanges = DirectorImGuiIcons.CreateRanges();
         var config = new ImFontConfigPtr(CreateFontConfig());
         try
         {
             config.MergeMode = true;
+            // Merge into the live default, not the last font in the atlas.
+            config.NativePtr->DstFont = font.NativePtr;
             config.PixelSnapH = true;
             config.OversampleH = config.OversampleV = 1;
-            config.GlyphMinAdvanceX = DirectorImGuiTheme.FontSize;
-            config.GlyphMaxAdvanceX = DirectorImGuiTheme.FontSize;
+            config.GlyphMinAdvanceX = font.FontSize;
+            config.GlyphMaxAdvanceX = font.FontSize;
             config.GlyphOffset = new Vector2(0, 2);
-            atlas.AddFontFromFileTTF(iconPath, DirectorImGuiTheme.FontSize, config, iconRanges);
+            atlas.AddFontFromFileTTF(iconFontPath, font.FontSize, config, iconRanges);
         }
         finally { config.Destroy(); }
-        // Build once after merging, before VSImGui uploads the texture. Moving
-        // glyph quads leaves the atlas UVs and the Chinese text metrics intact.
+        // Only icon quads are centered; the game's text metrics stay intact.
         if (!atlas.Build()) throw new InvalidOperationException("VS Director font atlas build failed.");
         DirectorImGuiIcons.CenterGlyphs(font);
-        fontLoaded = true;
+    }
+
+    private static unsafe ImFontPtr CurrentDefaultFont()
+    {
+        var io = ImGui.GetIO();
+        var fonts = io.Fonts.Fonts;
+        // Resolve afresh on every use. FontSettings can free/recreate every font
+        // while keeping the same context and atlas, even reusing old addresses.
+        // Check membership before using FontDefault, which may itself be stale.
+        for (int i = 0; i < fonts.Size; i++)
+            if (fonts[i].NativePtr == io.NativePtr->FontDefault) return fonts[i];
+        return fonts.Size > 0 ? fonts[0] : default;
     }
 
     [DllImport("cimgui", EntryPoint = "ImFontConfig_ImFontConfig", CallingConvention = CallingConvention.Cdecl)]
     private static extern nint CreateFontConfig();
 
-    internal static FontScope UseFont(bool dialog = true)
+    internal static unsafe FontScope UseFont(bool dialog = true)
     {
         ImGui.SetNextWindowViewport(ImGui.GetMainViewport().ID);
         if (dialog)
         {
             ImGui.SetNextWindowPos(ImGui.GetMainViewport().GetCenter(), ImGuiCond.Appearing, new Vector2(.5f));
         }
-        if (fontLoaded) ImGui.PushFont(font);
-        return new FontScope(fontLoaded, DirectorImGuiTheme.Use());
+        var font = CurrentDefaultFont();
+        bool pushed = font.NativePtr != null;
+        if (pushed) ImGui.PushFont(font);
+        return new FontScope(pushed, DirectorImGuiTheme.Use());
     }
 
     internal readonly struct FontScope(bool pushed, DirectorImGuiTheme.Scope theme) : IDisposable
@@ -191,7 +214,7 @@ internal static class DirectorImGuiRuntime
     {
         initialization?.UnpatchAll(initialization.Id);
         initialization = null;
-        fontLoaded = false;
+        iconFontPath = "";
         if (iconRanges != 0) Marshal.FreeHGlobal(iconRanges);
         iconRanges = 0;
     }

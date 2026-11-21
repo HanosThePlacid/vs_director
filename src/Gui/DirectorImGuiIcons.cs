@@ -43,6 +43,8 @@ internal static class DirectorImGuiIcons
         ["bookmark-filled"] = "\ufa88",
         ["bulb"] = "\uea51",
         ["camera"] = "\uea54",
+        ["cursor"] = "\uf265",
+        ["hand-move"] = "\uef50",
         ["camera-rotate"] = "\uee22",
         ["caret-down-filled"] = "\ufb2a",
         ["check"] = "\uea5e",
@@ -138,6 +140,7 @@ internal static class DirectorImGuiIcons
         ["undo"] = "\ueb77",
         ["upload"] = "\ueb47",
         ["video"] = "\ued22",
+        ["viewfinder"] = "\ueb4e",
         ["volume"] = "\ueb51",
         ["walk"] = "\uec87",
         ["wind"] = "\uec34",
@@ -148,6 +151,13 @@ internal static class DirectorImGuiIcons
     };
 
     internal static string Get(string name) => Glyphs.GetValueOrDefault(name ?? string.Empty, string.Empty);
+
+    internal static unsafe bool HasGlyphs(ImFontPtr font)
+    {
+        foreach (string glyph in Glyphs.Values)
+            if (font.FindGlyphNoFallback(glyph[0]).NativePtr == null) return false;
+        return true;
+    }
 
     internal static bool Button(string label, System.Numerics.Vector2 size)
     {

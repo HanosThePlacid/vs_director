@@ -7,41 +7,58 @@ namespace VSDirector.Gui;
 internal sealed partial class DirectorCreationWorkspace
 {
     private double replayImportStart, replayImportEnd = 5;
-    private void DrawActorLibrary()
-    {
-        ImGui.SetNextItemWidth(-1); ImGui.InputTextWithHint("##actor-search", L("creation-search-names"), ref search, 256);
-        if (ImGui.CollapsingHeader(L("creation-world-actors")))
-            foreach (var actor in Runtime.WorldActors().Where(a => search.Length == 0 || a.Name.Contains(search, StringComparison.OrdinalIgnoreCase)).Take(100))
-            {
-                if (ImGui.Selectable(actor.Name + "##world-" + actor.Id))
-                    Run(() => { Select(Runtime.AddNativeActor("", actor.Id)); auxiliary = ""; });
-                if (ImGui.BeginPopupContextItem("world-record-" + actor.Id))
-                { Item(L("creation-record-world-actor"), () => { Runtime.RecordWorldActor(actor.Id); auxiliary = ""; }); ImGui.EndPopup(); }
-            }
-        if (VSDirector.Replay.DirectorReplayRuntime.Manager is { IsPlaying: true } replay && ImGui.CollapsingHeader(L("creation-replay-actors")))
-        {
-            float from = (float)replayImportStart, to = (float)replayImportEnd;
-            ImGui.SetNextItemWidth(-1); if (ImGui.DragFloat(L("creation-replay-start"), ref from, .1f, 0, (float)replay.PlaybackDurationSeconds)) replayImportStart = from;
-            ImGui.SetNextItemWidth(-1); if (ImGui.DragFloat(L("creation-replay-end"), ref to, .1f, 0, (float)replay.PlaybackDurationSeconds)) replayImportEnd = to;
-            foreach (var source in replay.ActorPathSources)
-                if (ImGui.Selectable(source.DisplayName + "##replay-" + source.ActorKey)) Run(() =>
-                {
-                    if (!replay.TryBuildAction(source.ActorKey, replayImportStart, replayImportEnd, source.DisplayName, out var action, out _, out var error)) throw new InvalidOperationException(error);
-                    var entity = replay.ResolveReplayActor(source.ActorKey, null, 0);
-                    var actor = Runtime.AddNativeActor(source.EntityCode, entity?.EntityId ?? 0); Select(actor);
-                    Runtime.ImportPerformance(action, actor.Id, Session.Time, owner.ActiveReplayId, backgroundStart: replayImportStart); auxiliary = "";
-                });
-        }
-        ImGui.SeparatorText(L("creation-native-actors"));
-        foreach (var actor in Runtime.ActorResources(search).Take(200))
-            if (ImGui.Selectable(actor.Name + "##native-" + actor.Code))
-                Run(() => { Select(Runtime.AddNativeActor(actor.Code)); auxiliary = ""; });
-    }
-
     private Guid ikUpper, ikLower;
+    private string boneSearch = "";
     private void DrawActorRig(CreationSceneObject obj)
     {
-        if (CurrentModel is not { } model) return;
+        if (Project?.Models.Find(m => m.Id == obj.ModelId) is not { } model) return;
+        if (obj.ActorSource is not null && Header(L("creation-player-appearance-equipment")))
+        {
+            foreach (int hand in new[] { 1, 2 })
+            {
+                ImGui.PushID(hand);
+                string anchor = hand == 1 ? "RightHand" : "LeftHand";
+                if (model.Parts.Any(p => p.Name.Equals(anchor, StringComparison.OrdinalIgnoreCase)))
+                    ActorEquipmentRow(L(hand == 1 ? "creation-right-hand-item" : "creation-left-hand-item"),
+                        Runtime.ActorHandName(obj, hand), () => Runtime.PickActorItem(obj, hand), () => Runtime.SetActorHand(obj, hand, null));
+                ImGui.PopID();
+            }
+            if (Runtime.ActorHasClothing(obj) && Header(L("creation-actor-clothing")))
+            {
+                foreach (var slot in Enum.GetValues<Vintagestory.API.Common.EnumCharacterDressType>().Where(t => (int)t >= 0).OrderBy(t => (int)t))
+                {
+                    ImGui.PushID("clothing-" + slot);
+                    ActorEquipmentRow(L("creation-dress-" + slot.ToString().ToLowerInvariant()),
+                        Runtime.ActorWearableName(obj, (int)slot), () => Runtime.PickActorItem(obj, clothingSlot: (int)slot),
+                        () => Runtime.SetActorWearable(obj, (int)slot, null));
+                    ImGui.PopID();
+                }
+            }
+            if (Runtime.ActorSkinOptions(obj).Count > 0 && Header(L("creation-actor-skin"))
+                && ImGui.BeginTable("actor-skin", 2, ImGuiTableFlags.SizingStretchProp))
+            {
+                ImGui.TableSetupColumn("label", ImGuiTableColumnFlags.WidthFixed, 75 * DirectorImGuiTheme.Scale);
+                ImGui.TableSetupColumn("variant", ImGuiTableColumnFlags.WidthStretch);
+                foreach (var part in Runtime.ActorSkinOptions(obj).Where(p => !p.Hidden && p.Type != Vintagestory.GameContent.EnumSkinnableType.Voice))
+                {
+                    string current = Runtime.ActorSkinVariant(obj, part.Code);
+                    string Variant(string code) => Vintagestory.API.Config.Lang.Get((part.Type == Vintagestory.GameContent.EnumSkinnableType.Texture ? "color-" : "skinpart-") + code);
+                    string label = Vintagestory.API.Config.Lang.Get("skinpart-" + part.Code);
+                    ImGui.TableNextRow(); ImGui.TableNextColumn(); ImGui.AlignTextToFramePadding();
+                    ImGui.TextUnformatted(EquipmentLabel(label, ImGui.GetContentRegionAvail().X));
+                    if (ImGui.IsItemHovered()) ImGui.SetTooltip(label);
+                    ImGui.TableNextColumn(); ImGui.SetNextItemWidth(-1);
+                    if (ImGui.BeginCombo("##skin-" + part.Code, current.Length == 0 ? L("creation-none") : Variant(current)))
+                    {
+                        foreach (var variant in part.Variants)
+                            if (ImGui.Selectable(Variant(variant.Code) + "##" + variant.Code, current == variant.Code))
+                                Continue(() => Runtime.SetActorSkin(obj, part.Code, variant.Code));
+                        ImGui.EndCombo();
+                    }
+                }
+                ImGui.EndTable();
+            }
+        }
         if (Header(L("creation-player-body")))
         {
             var body = obj.PlayerBody;
@@ -53,6 +70,7 @@ internal sealed partial class DirectorCreationWorkspace
             Number(L("creation-player-body-eye"), body.EyeHeight, v => body.EyeHeight = v, .05, body.Height, .01f);
             ImGui.TextWrapped(L("creation-player-body-help"));
             if (Button(L("creation-player-body-apply"))) Run(() => Runtime.ApplyPlayerBody(body));
+            SameLineIfFits(L("creation-player-body-restore"));
             if (Button(L("creation-player-body-restore"))) Run(() => Runtime.ApplyPlayerBody(null));
         }
         if (Header(L("creation-recording-channels")))
@@ -60,52 +78,35 @@ internal sealed partial class DirectorCreationWorkspace
             foreach (var channel in new[] { CreationRecordingChannels.Position, CreationRecordingChannels.Rotation, CreationRecordingChannels.Pose, CreationRecordingChannels.Equipment })
                 Toggle(L("creation-record-" + channel.ToString().ToLowerInvariant()), obj.RecordingChannels.HasFlag(channel), v =>
                     obj.RecordingChannels = v ? obj.RecordingChannels | channel : obj.RecordingChannels & ~channel);
-            if (Button(L("creation-record-player-to-selected-actor"))) Continue(Runtime.TogglePerformance);
+            if (Button(L("creation-record-player-to-selected-actor"))) Continue(() => { Session.SelectedObject = obj.Id; Session.SelectedPart = Guid.Empty; Runtime.TogglePerformance(); });
         }
-        if (Header(L("creation-native-actions")))
-            foreach (var animation in Project!.Animations.Where(a => a.ModelId == model.Id))
-            {
-                ImGui.PushID(animation.Id.ToString());
-                if (ImGui.Selectable(animation.Name)) Continue(() => AddAnimationClip(animation));
-                if (ImGui.BeginPopupContextItem()) { Item(L("creation-edit"), () => EditAnimation(animation)); ImGui.EndPopup(); }
-                ImGui.PopID();
-            }
-        if (!Header(L("creation-ik"))) return;
-        if (Button(L("creation-ik-detect"))) Run(() =>
-        {
-            int added = 0;
-            foreach (var pair in DirectorCreationIk.SuggestChains(model))
-            {
-                if (obj.IkChains.Any(c => c.Upper == pair.Upper.Id)) continue;
-                ikUpper = pair.Upper.Id; ikLower = pair.Lower.Id; CreateIk(obj, model); added++;
-            }
-            if (added == 0) Runtime.SetStatus(L("creation-ik-no-segments"));
-        });
-        double weight = Session.Frame?.Objects.GetValueOrDefault(obj.Id)?.IkWeight ?? obj.IkWeight;
-        Number(L("creation-ik-weight"), weight, v => Session.SetProperty(obj.Id, Guid.Empty, CreationChannel.IkWeight, new(v, 0, 0), () => obj.IkWeight = v), 0, 1, .01f);
-        if (Button(L("creation-ik-weight-key"))) Session.Edit(L("creation-ik-weight-key"), _ => Session.WriteKey(obj.Id, Guid.Empty, CreationChannel.IkWeight, new(weight, 0, 0)));
-        void Bone(string title, ref Guid selection, Func<CreationPart,bool> filter)
-        {
-            Guid selected = selection;
-            if (!Combo(title, model.Parts.Find(p => p.Id == selected)?.Name ?? L("creation-none"))) return;
-            foreach (var part in model.Parts.Where(filter)) if (ImGui.Selectable(part.Name + "##" + part.Id)) selection = part.Id;
-            ImGui.EndCombo();
-        }
-        Bone(L("creation-ik-upper"), ref ikUpper, _ => true);
-        Bone(L("creation-ik-lower"), ref ikLower, p => p.ParentId == ikUpper);
-        if (Button(L("creation-ik-create"))) Run(() => CreateIk(obj, model));
-        foreach (var chain in obj.IkChains.ToArray())
-        {
-            ImGui.PushID(chain.Id.ToString());
-            Toggle(chain.Name, chain.Enabled, v => chain.Enabled = v);
-            VectorField(L("creation-ik-end"), chain.EndOffset, v => chain.EndOffset = v, .01f);
-            if (Button(L("creation-ik-target"))) Select(Project!.Objects.First(o => o.Id == chain.Target));
-            SameLineIfFits(L("creation-ik-pole"));
-            if (Button(L("creation-ik-pole"))) Select(Project!.Objects.First(o => o.Id == chain.Pole));
-            if (Button(L("creation-delete-selected-object"))) Session.Edit(L("creation-delete-selected-object"), _ => obj.IkChains.Remove(chain));
-            ImGui.PopID();
-        }
-        if (obj.IkChains.Count > 0 && Button(L("creation-ik-bake"))) Run(() => BakeIk(obj));
+    }
+
+    private void ActorEquipmentRow(string label, string name, Action pick, Action clear)
+    {
+        if (!ImGui.BeginTable("equipment", 2, ImGuiTableFlags.SizingStretchProp)) return;
+        ImGui.TableSetupColumn("label", ImGuiTableColumnFlags.WidthFixed, 75 * DirectorImGuiTheme.Scale);
+        ImGui.TableSetupColumn("item", ImGuiTableColumnFlags.WidthStretch);
+        ImGui.TableNextRow(); ImGui.TableNextColumn(); ImGui.AlignTextToFramePadding();
+        ImGui.TextUnformatted(EquipmentLabel(label, ImGui.GetContentRegionAvail().X));
+        if (ImGui.IsItemHovered()) ImGui.SetTooltip(label);
+        ImGui.TableNextColumn();
+        float side = ImGui.GetFrameHeight();
+        float width = Math.Max(1, ImGui.GetContentRegionAvail().X - side - ImGui.GetStyle().ItemSpacing.X);
+        string display = EquipmentLabel(name, width - ImGui.GetStyle().FramePadding.X * 2);
+        if (ImGui.Button(display + "###pick", new(width, 0))) Continue(pick);
+        if (ImGui.IsItemHovered()) ImGui.SetTooltip(name);
+        ImGui.SameLine();
+        if (DirectorImGuiIcons.Button(DirectorImGuiIcons.Get("x") + "##clear", new(side, side))) Continue(clear);
+        if (ImGui.IsItemHovered()) ImGui.SetTooltip(L("creation-clear-item"));
+        ImGui.EndTable();
+    }
+    private static string EquipmentLabel(string text, float width)
+    {
+        if (ImGui.CalcTextSize(text).X <= width) return text;
+        int count = text.Length;
+        while (count > 0 && ImGui.CalcTextSize(text[..count] + "…").X > width) count--;
+        return text[..count] + "…";
     }
 
     private void CreateIk(CreationSceneObject obj, CreationModel model)
@@ -113,35 +114,35 @@ internal sealed partial class DirectorCreationWorkspace
         var upper = model.Parts.Find(p => p.Id == ikUpper); var lower = model.Parts.Find(p => p.Id == ikLower && p.ParentId == ikUpper);
         if (upper is null || lower is null || Session.Frame is not { } frame) throw new InvalidOperationException(L("creation-ik-invalid"));
         if (obj.IkChains.Any(c => c.Upper == upper.Id || c.Lower == lower.Id)) throw new InvalidOperationException(L("creation-ik-invalid"));
-        var state = frame.Objects[obj.Id];
-        var offset = ((lower.To - lower.From) * (1d / 16)).Float();
-        int axis = Math.Abs(offset.X) > Math.Abs(offset.Y) ? 0 : 1; if (Math.Abs(offset.Z) > Math.Abs(axis == 0 ? offset.X : offset.Y)) axis = 2;
-        var pivot = DirectorCreationIk.Pivot(lower);
-        var end = pivot; end[axis] = Math.Abs(pivot[axis]) < Math.Abs(offset[axis] - pivot[axis]) ? offset[axis] : 0;
-        if (System.Numerics.Vector3.DistanceSquared(System.Numerics.Vector3.Transform(DirectorCreationIk.Pivot(upper), state.Bones[upper.Id]), System.Numerics.Vector3.Transform(pivot, state.Bones[lower.Id])) < 1e-10f
-            || System.Numerics.Vector3.DistanceSquared(end, pivot) < 1e-10f) throw new InvalidOperationException(L("creation-ik-invalid"));
-        var target = new CreationSceneObject { Kind = CreationObjectKind.Group, Name = lower.Name + " · " + L("creation-ik-target"), Transform = new() { Position = CreationVector.From(System.Numerics.Vector3.Transform(end, state.Bones[lower.Id] * state.World)) } };
-        var pole = new CreationSceneObject { Kind = CreationObjectKind.Group, Name = lower.Name + " · " + L("creation-ik-pole"), Transform = new() { Position = CreationVector.From(System.Numerics.Vector3.Transform(pivot, state.Bones[lower.Id] * state.World)) + new CreationVector(0, 0, 1) } };
-        Session.Edit(L("creation-ik-create"), p => { p.Objects.Add(target); p.Objects.Add(pole); obj.IkChains.Add(new() { Name = upper.Name, Upper = upper.Id, Lower = lower.Id, Target = target.Id, Pole = pole.Id, EndOffset = CreationVector.From(end) }); });
+        var controls = DirectorCreationIk.CreateControls(obj, model, frame.Objects[obj.Id], upper, lower);
+        controls.Chain.Name=BoneName(model,upper)+" → "+BoneName(model,lower);
+        controls.Target.Name = lower.Name + " · " + L("creation-ik-target");
+        controls.Pole.Name = lower.Name + " · " + L("creation-ik-pole");
+        Session.Edit(L("creation-ik-create"), p => { p.Objects.Add(controls.Target); p.Objects.Add(controls.Pole); obj.IkChains.Add(controls.Chain); });
+        ikPanel=true;focusRigPanel="ik";
     }
 
     private void BakeIk(CreationSceneObject obj)
     {
         var project = Project!;
         var bones = obj.IkChains.Where(c => c.Enabled).SelectMany(c => new[] { c.Upper, c.Lower }).Distinct().ToArray();
-        double start = project.Loop ? project.LoopStart : 0, end = project.Loop ? project.LoopEnd : project.Duration;
-        var animation = new CreationAnimation { Name = obj.Name + " · IK", ModelId = obj.ModelId, Duration = end - start };
+        var editing = Session.EditingAnimation;
+        double start = editing is not null ? 0 : project.Loop ? project.LoopStart : 0, end = editing?.Duration ?? (project.Loop ? project.LoopEnd : project.Duration);
+        if (bones.Length == 0 || end <= start) throw new InvalidOperationException(L("creation-ik-invalid"));
+        var animation = new CreationAnimation { Name = (editing?.Name ?? obj.Name) + " · IK", ModelId = obj.ModelId, Duration = end - start, Loop = editing?.Loop ?? false };
+        if (editing is not null) animation.Tracks.AddRange(editing.Tracks.Where(t => t.ObjectId == Guid.Empty && t.Channel != CreationChannel.IkWeight
+            && (!bones.Contains(t.PartId) || t.Channel is not (CreationChannel.Position or CreationChannel.Rotation or CreationChannel.Scale))).Select(t => t.Copy()));
         void Key(Guid bone, CreationChannel channel, double time, CreationVector value)
         {
             var track = animation.Tracks.Find(t => t.PartId == bone && t.Channel == channel);
             if (track is null) { track = new() { PartId = bone, Channel = channel }; animation.Tracks.Add(track); }
             DirectorCreationEdits.SetKey(track, time - start, value);
         }
-        if ((end - start) * project.Output.Fps > 250000) throw new InvalidOperationException(L("creation-ik-bake-limit"));
-        for (int i = 0; i <= Math.Ceiling((end - start) * project.Output.Fps); i++)
+        if ((end - start) * DirectorCreationTiming.FramesPerSecond > 250000) throw new InvalidOperationException(L("creation-ik-bake-limit"));
+        for (int i = 0; i <= Math.Ceiling((end - start) * DirectorCreationTiming.FramesPerSecond); i++)
         {
-            double time = Math.Min(end, start + i / (double)project.Output.Fps);
-            var state = DirectorCreationEvaluator.Evaluate(project, time).Objects[obj.Id];
+            double time = Math.Min(end, start + i / (double)DirectorCreationTiming.FramesPerSecond);
+            var state = DirectorCreationEvaluator.Evaluate(project, editing is null ? time : Session.Time, editingAction: editing, actionActor: obj.Id, actionTime: time).Objects[obj.Id];
             foreach (var bone in bones) if (state.Pose.TryGetValue(bone, out var pose))
             {
                 Key(bone, CreationChannel.Rotation, time, pose.Rotation);
@@ -153,7 +154,8 @@ internal sealed partial class DirectorCreationWorkspace
         Session.Edit(L("creation-ik-bake"), p =>
         {
             p.Animations.Add(animation);
-            p.Clips.Add(new() { Name = animation.Name, ObjectId = obj.Id, AnimationId = animation.Id, Start = start, Duration = end - start, BakedPose = true });
+            if (editing is null) p.Clips.Add(new() { Name = animation.Name, ObjectId = obj.Id, AnimationId = animation.Id, Start = start, Duration = end - start, BakedPose = true });
         });
+        if (editing is not null) Session.EnterAnimation(animation.Id, obj.Id);
     }
 }
