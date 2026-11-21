@@ -1,13 +1,14 @@
 {
   "$schema": "https://moddbcdn.vintagestory.at/schema/modinfo.latest.json",
   "type": "code",
-  "modid": "vsdirector",
-  "name": "VS Director",
-  "description": "Director workspace with camera paths, replay timeline elements, follow cameras, and video export through OBS or FFmpeg MP4.",
+  "modid": "vsdirectorfork",
+  "name": "VS Director Fork",
+  "description": "Fork of VS Director by HansJack (VSCN-Studio): director workspace with camera paths, replay timeline elements, follow cameras, video export through OBS or FFmpeg MP4, voice chat capture and a replay camera preset library.",
   "authors": [
-    "HansJack (VSCN-Studio)"
+    "HansJack (VSCN-Studio)",
+    "HanosThePlacid"
   ],
-  "version": "1.0.4-pre.10",
+  "version": "1.0.4-pre.11",
   "side": "universal",
   "requiredOnServer": false,
   "dependencies": {

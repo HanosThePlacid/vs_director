@@ -84,6 +84,7 @@ public sealed partial class VSDirectorModSystem : ModSystem
     private DirectorPermissionClient? permissionClient;
     private DirectorRecordingCoordinator? recording;
     private Voice.DirectorAegisVoiceCapture? aegisVoiceCapture;
+    private Voice.DirectorVoiceChatModCapture? voiceChatModCapture;
     private DirectorRecordingSessionStatus? latestRecordingServerStatus;
     private Guid? assignedRecordingTrackId;
     private DirectorLiveWorkflowRunner? liveWorkflowRunner;
@@ -1417,33 +1418,48 @@ public sealed partial class VSDirectorModSystem : ModSystem
         return DirectorCoordinateSpace.ToAbsolute(x, y, z, mapSizeX, mapSizeZ);
     }
 
+    /// <summary>Mod id of the original VS Director by HansJack (VSCN-Studio).</summary>
+    internal const string OriginalModId = "vsdirector";
+
+    /// <summary>Mod id of this fork.</summary>
+    internal const string ForkModId = "vsdirectorfork";
+
+    private const string ForkAssemblyName = "VSDirectorFork";
+
     public override bool ShouldLoad(ICoreAPI api)
     {
-        return !IsShadowedMergedCopy(api);
+        return !IsShadowedCopy(api);
     }
 
     /// <summary>
-    /// When this code ships inside a merged mod pack, a standalone VS Director
-    /// (for example one a server made the client download) must win. Two copies
-    /// would register the same network channel, Harmony patches and hotkeys.
+    /// Only one VS Director may run: two copies would register the same network channel,
+    /// Harmony patches, hotkeys and asset domain. The fork steps aside when the original
+    /// VS Director is loaded too (for example one a server made the client download), and a
+    /// copy merged into a mod pack steps aside for any standalone VS Director or fork.
     /// </summary>
-    private static bool IsShadowedMergedCopy(ICoreAPI api)
+    private static bool IsShadowedCopy(ICoreAPI api)
     {
         Assembly mine = typeof(VSDirectorModSystem).Assembly;
-        if (string.Equals(mine.GetName().Name, "VSDirector", StringComparison.Ordinal))
-        {
-            return false;
-        }
-
+        bool standaloneFork = string.Equals(mine.GetName().Name, ForkAssemblyName, StringComparison.Ordinal);
         try
         {
-            bool standalone = api.ModLoader.Mods.Any(mod =>
-                mod?.FileName is { } file
-                && file.StartsWith("vsdirector", StringComparison.OrdinalIgnoreCase));
+            if (standaloneFork)
+            {
+                bool original = api.ModLoader.Mods.Any(mod => mod?.Info?.ModID == OriginalModId);
+                if (original)
+                {
+                    api.Logger.Warning(
+                        "VS Director Fork: the original VS Director (vsdirector) is also loaded; the fork stays disabled. Remove one of them.");
+                }
+                return original;
+            }
+
+            // A merged copy runs under the pack's own mod id.
+            bool standalone = api.ModLoader.Mods.Any(mod => mod?.Info?.ModID is OriginalModId or ForkModId);
             if (standalone)
             {
                 api.Logger.Notification(
-                    "VS Director: a standalone vsdirector mod is loaded; the merged copy stays disabled.");
+                    "VS Director: a standalone VS Director is loaded; the merged copy stays disabled.");
             }
             return standalone;
         }
@@ -1529,6 +1545,11 @@ public sealed partial class VSDirectorModSystem : ModSystem
             SetRecordingInputLock);
         recording.StateChanged += OnRecordingStateChanged;
         aegisVoiceCapture = Voice.DirectorAegisVoiceCapture.TryCreate(
+            api,
+            voiceApi,
+            config,
+            () => replay?.IsVoiceRecording == true || liveOffscreenSession is not null);
+        voiceChatModCapture = Voice.DirectorVoiceChatModCapture.TryCreate(
             api,
             voiceApi,
             config,
@@ -1662,6 +1683,8 @@ public sealed partial class VSDirectorModSystem : ModSystem
         replay = null;
         aegisVoiceCapture?.Dispose();
         aegisVoiceCapture = null;
+        voiceChatModCapture?.Dispose();
+        voiceChatModCapture = null;
         if (recording is not null)
         {
             recording.StateChanged -= OnRecordingStateChanged;
@@ -8389,7 +8412,12 @@ public sealed partial class VSDirectorModSystem : ModSystem
             return "VS Director voice capture: unavailable.";
         }
         string device = config.ReplayMicrophoneDevice.Length == 0 ? "system default" : config.ReplayMicrophoneDevice;
-        return $"VS Director voice capture: Aegis Voice {capture.Status}; capture {(config.ReplayCaptureAegisVoice ? "on" : "off")}; own microphone {(config.ReplayCaptureOwnMicrophone ? "on" : "off")} ({device}{(capture.MicrophoneOpen ? ", open" : string.Empty)}); recording now: {(replay?.IsVoiceRecording == true ? "yes" : "no")}; blocks captured: others {capture.RemoteBlocksCaptured}, you {capture.MicrophoneBlocksCaptured}.";
+        string text = $"VS Director voice capture: Aegis Voice {capture.Status}; capture {(config.ReplayCaptureAegisVoice ? "on" : "off")}; own microphone {(config.ReplayCaptureOwnMicrophone ? "on" : "off")} ({device}{(capture.MicrophoneOpen ? ", open" : string.Empty)}); recording now: {(replay?.IsVoiceRecording == true ? "yes" : "no")}; blocks captured: others {capture.RemoteBlocksCaptured}, you {capture.MicrophoneBlocksCaptured}.";
+        if (voiceChatModCapture is { } mods)
+        {
+            text += $"\nRP Voice Chat: {mods.RpStatus}; YHPVC: {mods.YhStatus}; blocks captured: others {mods.RemoteBlocksCaptured}, you {mods.OwnBlocksCaptured}.";
+        }
+        return text;
     }
 
     internal string AegisVoiceMicrophoneListText()
@@ -14302,6 +14330,7 @@ public sealed partial class VSDirectorModSystem : ModSystem
         UpdatePendingWorkflowReplayRecording();
         recording?.OnGameTick();
         aegisVoiceCapture?.Tick();
+        voiceChatModCapture?.Tick();
         UpdateLiveWorkflowRecording();
         UpdatePendingRemoteFollow();
         UpdatePendingRemoteLiveOffscreen();

@@ -1,4 +1,20 @@
-# VS Director
+# VS Director Fork
+
+A community fork of [VS Director](https://github.com/vscn-studio/vs_director) by HansJack (VSCN-Studio), MIT License. All core features are the original author's work; please report fork bugs here, not upstream.
+
+Fork additions:
+
+- OBS recording from the replay workspace (`.director obs`, Ctrl+F9)
+- Voice chat capture into replays: Aegis Voice, RP Voice Chat, YHPVC (other players and your own voice, positioned on the speaker; `.director voice status`)
+- 137 replay camera presets (126 catalog + 11 smart presets) in a browser with search, favourites, recent and most used
+- Fade grade, slow-motion time effect, "ends shot" / "ends element" keyframes
+- Cross-world replays
+
+Mod id `vsdirectorfork`. Do not install it together with the original VS Director (`vsdirector`); if both are loaded the fork disables itself. Config, replays and projects use the same `VSDirector` folders as the original, so they carry over.
+
+---
+
+## Original README
 
 Game compatibility: the same package supports Vintage Story 1.22.3 and 1.23.0-pre.1, with VSImGui 1.2.7. The 1.23 adaptation covers replay serialization and block entities, camera FOV, offscreen terrain visibility, native text inputs, and workspace picking. Automated checks run the same DLL against both versions; actual multiplayer sessions and the complete in-game recording/export workflow still need manual verification. Later 1.23 builds require revalidation.
 

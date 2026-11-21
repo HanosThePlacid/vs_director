@@ -448,7 +448,7 @@ internal static class DirectorCommands
                 .EndSubCommand()
             .EndSubCommand()
             .BeginSubCommand("voice")
-                .WithDescription("Aegis Voice capture into replays")
+                .WithDescription("Voice chat capture into replays (Aegis Voice, RP Voice Chat, YHPVC)")
                 .BeginSubCommand("status")
                     .HandleWith(_ => TextCommandResult.Success(system.AegisVoiceStatusText()))
                 .EndSubCommand()

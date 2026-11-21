@@ -177,10 +177,10 @@ public sealed class DirectorConfig
 
     public bool ReplayCaptureVoiceModAudio { get; set; } = true;
 
-    /// <summary>Record Aegis Voice speakers the local player hears into replays.</summary>
+    /// <summary>Record voice chat speakers the local player hears (Aegis Voice, RP Voice Chat, YHPVC) into replays.</summary>
     public bool ReplayCaptureAegisVoice { get; set; } = true;
 
-    /// <summary>Record the local player's own voice while Aegis Voice transmits it.</summary>
+    /// <summary>Record the local player's own voice while their voice chat mod transmits it.</summary>
     public bool ReplayCaptureOwnMicrophone { get; set; } = true;
 
     /// <summary>OpenAL capture device name; empty uses the system default microphone.</summary>

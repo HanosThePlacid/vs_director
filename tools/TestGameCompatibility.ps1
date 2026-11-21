@@ -32,7 +32,7 @@ function Invoke-LoggedDotnet([string]$LogName, [string[]]$Arguments) {
 try {
     Invoke-LoggedDotnet 'compat122-build.log' @('build', (Join-Path $repo 'VSDirector.csproj'), '-c', 'Release',
         '-p:PackMod=false', "-p:VintageStoryPath=$BaselineGamePath", "-p:VSImGuiPath=$VSImGuiPath")
-    $assembly = Join-Path $repo 'bin/Release/Mods/vsdirector/VSDirector.dll'
+    $assembly = Join-Path $repo 'bin/Release/Mods/vsdirectorfork/VSDirectorFork.dll'
     $hash = (Get-FileHash -LiteralPath $assembly -Algorithm SHA256).Hash
     Invoke-LoggedDotnet 'compat-core.log' @('run', '--project', (Join-Path $repo 'tests/VSDirector.CoreTests'), '-c', 'Release')
     foreach ($game in @(@{Name='122'; Path=$BaselineGamePath}, @{Name='123'; Path=$NewGamePath})) {

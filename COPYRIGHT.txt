@@ -1,5 +1,10 @@
-VS Director
+VS Director Fork
 Copyright (c) 2026 HansJack (VSCN-Studio)
+Copyright (c) 2026 HanosThePlacid (fork modifications)
+
+VS Director Fork is a modified version of VS Director by HansJack (VSCN-Studio),
+https://github.com/vscn-studio/vs_director, published under the same MIT License.
+Fork source: https://github.com/HanosThePlacid/vs_director
 
 Original code, interface, and documentation are licensed under the MIT License.
 See LICENSE for the full license text. The companion OBS binary linked with

@@ -5,9 +5,9 @@
     <Nullable>enable</Nullable>
     <LangVersion>latest</LangVersion>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
-    <AssemblyName>VSDirector</AssemblyName>
+    <AssemblyName>VSDirectorFork</AssemblyName>
     <RootNamespace>VSDirector</RootNamespace>
-    <Version>1.0.4-pre.10</Version>
+    <Version>1.0.4-pre.11</Version>
     <Authors>HansJack (VSCN-Studio)</Authors>
     <Copyright>Copyright (c) 2026 HansJack (VSCN-Studio)</Copyright>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
@@ -15,7 +15,7 @@
     <!-- Prefer the declared SDK over stale DLLs in test/build output folders. -->
     <AssemblySearchPaths>{HintPathFromItem};$(AssemblySearchPaths)</AssemblySearchPaths>
     <AppendTargetFrameworkToOutputPath>false</AppendTargetFrameworkToOutputPath>
-    <OutputPath>bin\$(Configuration)\Mods\vsdirector\</OutputPath>
+    <OutputPath>bin\$(Configuration)\Mods\vsdirectorfork\</OutputPath>
   </PropertyGroup>
 
   <ItemGroup>
@@ -98,7 +98,7 @@
       DestinationFiles="@(ModAssetFiles->'$(ModPackageDirectory)\assets\%(RecursiveDir)%(Filename)%(Extension)')" />
     <ZipDirectory
       SourceDirectory="$(ModPackageDirectory)"
-      DestinationFile="$(MSBuildProjectDirectory)\artifacts\vsdirector_$(Version).zip"
+      DestinationFile="$(MSBuildProjectDirectory)\artifacts\vsdirectorfork_$(Version).zip"
       Overwrite="true" />
     <RemoveDir Directories="$(ObsSourcePackageDirectory)" />
     <MakeDir Directories="$(ObsSourcePackageDirectory);$(ObsSourcePackageDirectory)\licenses;$(ObsSourcePackageDirectory)\.github\workflows;$(ObsSourcePackageDirectory)\tools" />
@@ -122,14 +122,14 @@
     <Copy SourceFiles="$(MSBuildProjectDirectory)\tools\StageObsCompliance.ps1" DestinationFolder="$(ObsSourcePackageDirectory)\tools" />
     <ZipDirectory
       SourceDirectory="$(ObsSourcePackageDirectory)"
-      DestinationFile="$(MSBuildProjectDirectory)\artifacts\vsdirector_obs_source_$(Version).zip"
+      DestinationFile="$(MSBuildProjectDirectory)\artifacts\vsdirectorfork_obs_source_$(Version).zip"
       Overwrite="true" />
     <MakeDir
       Condition="'$(ModDeploymentDirectory)' != ''"
       Directories="$(ModDeploymentDirectory)" />
     <Copy
       Condition="'$(ModDeploymentDirectory)' != ''"
-      SourceFiles="$(MSBuildProjectDirectory)\artifacts\vsdirector_$(Version).zip"
+      SourceFiles="$(MSBuildProjectDirectory)\artifacts\vsdirectorfork_$(Version).zip"
       DestinationFolder="$(ModDeploymentDirectory)" />
   </Target>
 </Project>
