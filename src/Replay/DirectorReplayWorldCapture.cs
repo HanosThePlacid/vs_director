@@ -16,7 +16,9 @@ internal static class DirectorReplayWorldCapture
         ICoreClientAPI capi,
         ClientMain game,
         int requestedRadiusChunks,
-        CameraPreset? cameraCenter = null)
+        CameraPreset? cameraCenter = null,
+        int blocksBelow = 0,
+        int blocksAbove = 0)
     {
         if (capi.World.Player?.Entity is not { } player)
         {
@@ -29,10 +31,13 @@ internal static class DirectorReplayWorldCapture
         int dimension = useCameraCenter ? cameraCenter!.Dimension : player.Pos.Dimension;
         double centerX = useCameraCenter ? cameraCenter!.X : player.Pos.X;
         double centerZ = useCameraCenter ? cameraCenter!.Z : player.Pos.Z;
+        double centerY = useCameraCenter && double.IsFinite(cameraCenter!.Y) ? cameraCenter.Y : player.Pos.Y;
         int centerChunkX = (int)Math.Floor(centerX / ChunkSize);
         int centerChunkZ = (int)Math.Floor(centerZ / ChunkSize);
         int radius = Math.Clamp(requestedRadiusChunks, 0, 16);
         int verticalChunks = Math.Max(1, (capi.World.MapSizeY + ChunkSize - 1) / ChunkSize);
+        (int firstChunkY, int lastChunkY) = DirectorReplayWorldBand.ChunkRange(
+            centerY, blocksBelow, blocksAbove, verticalChunks, ChunkSize);
         DirectorReplayWorldSnapshot snapshot = new()
         {
             Dimension = dimension,
@@ -49,7 +54,7 @@ internal static class DirectorReplayWorldCapture
         {
             for (int chunkX = centerChunkX - radius; chunkX <= centerChunkX + radius; chunkX++)
             {
-                for (int chunkY = 0; chunkY < verticalChunks; chunkY++)
+                for (int chunkY = firstChunkY; chunkY <= lastChunkY; chunkY++)
                 {
                     int internalChunkY = chunkY + dimension * GlobalConstants.DimensionSizeInChunks;
                     IWorldChunk? chunk = game.WorldMap.GetChunk(chunkX, internalChunkY, chunkZ);

@@ -20,6 +20,22 @@ public sealed class DirectorReplayDocument
 
     public string WorldId { get; set; } = string.Empty;
 
+    /// <summary>The world this replay was recorded in. Null in replays made before cross-world playback.</summary>
+    public DirectorReplayWorldInfo? World { get; set; }
+
+    /// <summary>
+    /// Block and item codes of the recording world, by number. Lets another
+    /// world translate the recorded numbers into its own.
+    /// </summary>
+    public DirectorReplayIdTable? Ids { get; set; }
+
+    /// <summary>
+    /// Set while a replay from another world is open: its recorded numbers
+    /// are already translated to the current world as they are read.
+    /// </summary>
+    [System.Text.Json.Serialization.JsonIgnore]
+    public bool IsRetargeted { get; internal set; }
+
     public DateTimeOffset CreatedUtc { get; set; }
 
     public double SampleRate { get; set; } = 30d;
@@ -74,6 +90,9 @@ public sealed class DirectorReplayDocument
             Id = Id,
             Name = Name,
             WorldId = WorldId,
+            World = World?.Copy(),
+            Ids = Ids,
+            IsRetargeted = IsRetargeted,
             CreatedUtc = CreatedUtc,
             SampleRate = SampleRate,
             DurationSeconds = DurationSeconds,
@@ -170,6 +189,13 @@ public sealed class DirectorReplayActorTrack
 
     public long EntityId { get; set; }
 
+    /// <summary>
+    /// Set while a replay from another world is open. <see cref="EntityId"/>
+    /// then only identifies the actor inside the replay.
+    /// </summary>
+    [System.Text.Json.Serialization.JsonIgnore]
+    public bool RecordedElsewhere { get; internal set; }
+
     public string PlayerUid { get; set; } = string.Empty;
 
     public bool ForceGhost { get; set; }
@@ -200,6 +226,7 @@ public sealed class DirectorReplayActorTrack
         {
             ActorKey = ActorKey,
             EntityId = EntityId,
+            RecordedElsewhere = RecordedElsewhere,
             PlayerUid = PlayerUid,
             ForceGhost = ForceGhost,
             EntityCode = EntityCode,
@@ -244,6 +271,9 @@ public sealed class DirectorReplayActorState
     public double TimeSeconds { get; set; }
 
     public byte[] Data { get; set; } = Array.Empty<byte>();
+
+    internal DirectorReplayActorState WithData(byte[] data)
+        => new() { TimeSeconds = TimeSeconds, Data = data };
 
     public DirectorReplayActorState DeepClone()
         => new()
@@ -294,6 +324,14 @@ public sealed class DirectorReplayActorSample
     public double MotionZ { get; set; }
 
     public bool HasRenderState { get; set; }
+
+    /// <summary>
+    /// Damage tint. The game computes it from a client-only timer and never
+    /// serializes it, so replays capture the rendered value directly.
+    /// </summary>
+    public bool HasRenderColor { get; set; }
+
+    public int RenderColor { get; set; }
 
     public bool OnGround { get; set; }
 
@@ -365,6 +403,9 @@ public sealed class DirectorReplayActorSample
 
     public List<DirectorReplayAnimationSample> AnimationStates { get; set; } = new();
 
+    /// <summary>Copies the sample but shares its payload lists; for read-only translated views.</summary>
+    internal DirectorReplayActorSample ShallowCopy() => (DirectorReplayActorSample)MemberwiseClone();
+
     public DirectorReplayActorSample DeepClone()
     {
         return new DirectorReplayActorSample
@@ -389,6 +430,8 @@ public sealed class DirectorReplayActorSample
             MotionY = MotionY,
             MotionZ = MotionZ,
             HasRenderState = HasRenderState,
+            HasRenderColor = HasRenderColor,
+            RenderColor = RenderColor,
             OnGround = OnGround,
             FeetInLiquid = FeetInLiquid,
             Swimming = Swimming,
@@ -623,6 +666,9 @@ public sealed class DirectorReplayBlockEvent
 
     public byte[] BlockEntityData { get; set; } = Array.Empty<byte>();
 
+    /// <summary>Copies the event but shares its payload; for read-only translated views.</summary>
+    internal DirectorReplayBlockEvent ShallowCopy() => (DirectorReplayBlockEvent)MemberwiseClone();
+
     public DirectorReplayBlockEvent DeepClone()
         => new()
         {
@@ -694,6 +740,9 @@ public sealed class DirectorReplayParticleEvent
     public float Scale { get; set; } = 1f;
 
     public int ParticleModel { get; set; }
+
+    /// <summary>Copies the event but shares its payload; for read-only translated views.</summary>
+    internal DirectorReplayParticleEvent ShallowCopy() => (DirectorReplayParticleEvent)MemberwiseClone();
 
     public DirectorReplayParticleEvent DeepClone()
         => (DirectorReplayParticleEvent)MemberwiseCloneWithData();
@@ -777,6 +826,9 @@ public sealed class DirectorReplayVoiceFrame
 
     /// <summary>Little-endian signed 16-bit mono PCM at 48 kHz.</summary>
     public byte[] Pcm16 { get; set; } = Array.Empty<byte>();
+
+    /// <summary>Copies the frame but shares its payload; for read-only translated views.</summary>
+    internal DirectorReplayVoiceFrame ShallowCopy() => (DirectorReplayVoiceFrame)MemberwiseClone();
 
     public DirectorReplayVoiceFrame DeepClone()
         => new()

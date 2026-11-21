@@ -105,7 +105,7 @@ internal static class DirectorBlockSoundRelay
 
         try
         {
-            currentChannel.SendPacket(new DirectorBlockSoundEvent
+            currentChannel.TrySendPacket(new DirectorBlockSoundEvent
             {
                 Location = location.ToString(),
                 X = x,

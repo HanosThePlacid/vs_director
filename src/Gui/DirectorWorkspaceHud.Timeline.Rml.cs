@@ -169,6 +169,10 @@ internal sealed partial class DirectorWorkspaceHud
                 owner.ReplayBasePlaybackSpeed > 1 ? "active" : "");
             Button("replaySkipForward", 4, "replay-skip-forward", "track-next", SkipReplayForward, playing);
             Button("exit", 5, "replay-exit", "stop", StopReplay, playing);
+            Button("replayShotCamera", 6, owner.IsReplayTimelineCameraActive ? "replay-free-camera-button" : "replay-timeline-camera-button",
+                "video", ToggleReplayShotCamera, playing, owner.IsReplayTimelineCameraActive ? "active" : "");
+            Button("replayMoveToPlayer", 7, "replay-move-to-player", "focus-2", OpenReplayPlayerPicker, playing);
+            Button("replayTimelineFit", 8, "replay-timeline-fit", "arrows-maximize", FitReplayTimeline, true);
         }
         else
         {
@@ -373,7 +377,7 @@ internal sealed partial class DirectorWorkspaceHud
         "Camera" or "CameraPath" => "camera", "Marker" => "bookmark", "Speed" => "gauge", "CameraOrbit" => "rotate-360",
         "TrackEntity" or "LookAt" => "focus-2", "FollowEntity" => "walk", "CameraShake" => "camera-rotate", "Fov" => "eye",
         "Timelapse" => "hourglass", "TimeOfDay" => "clock", "Freeze" => "snowflake", "BlockOverride" => "cube",
-        "VoiceAudio" or "Audio" => "volume", "Roll" => "rotate", _ => "menu-2"
+        "VoiceAudio" or "Audio" => "volume", "Roll" => "rotate", "ColorGrade" => "palette", "Title" => "typography", _ => "menu-2"
     };
 
     private static string TimelineKeyIcon(string type, bool frozen = false, bool end = false) => type switch

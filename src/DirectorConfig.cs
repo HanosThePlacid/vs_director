@@ -136,7 +136,33 @@ public sealed class DirectorConfig
     public bool ReplayPauseWorld { get; set; }
 
     public int ReplaySnapshotRadiusChunks { get; set; } = 4;
+
+    /// <summary>
+    /// Blocks below / above the recording spot kept in the world snapshot, both when
+    /// recording and when a replay is opened. Tall worlds such as 2048-block servers would
+    /// otherwise store and load every chunk to the sky. Set from the replay panel sliders.
+    /// </summary>
+    public int ReplayRangeBelowBlocks { get; set; } = 100;
+
+    public int ReplayRangeAboveBlocks { get; set; } = 100;
+
+    public const int ReplayRangeMaxBlocks = 500;
     public string ReplayOutputDirectory { get; set; } = string.Empty;
+
+    /// <summary>
+    /// Store the recording world's block and item codes inside every replay,
+    /// so it can be watched in another world without that world's file.
+    /// </summary>
+    public bool ReplayEmbedWorldIds { get; set; } = true;
+
+    /// <summary>List replays recorded in other worlds next to this world's.</summary>
+    public bool ReplayListOtherWorlds { get; set; } = true;
+
+    /// <summary>
+    /// When a replay from another world is opened in creative or spectator
+    /// mode, move the player to where it was recorded so its chunks load.
+    /// </summary>
+    public bool ReplayTheaterTeleport { get; set; } = true;
 
     /// <summary>
     /// Radius of the moving chunk window used to collect third-party voice
@@ -150,6 +176,15 @@ public sealed class DirectorConfig
     public bool ReplayCaptureSounds { get; set; } = true;
 
     public bool ReplayCaptureVoiceModAudio { get; set; } = true;
+
+    /// <summary>Record Aegis Voice speakers the local player hears into replays.</summary>
+    public bool ReplayCaptureAegisVoice { get; set; } = true;
+
+    /// <summary>Record the local player's own voice while Aegis Voice transmits it.</summary>
+    public bool ReplayCaptureOwnMicrophone { get; set; } = true;
+
+    /// <summary>OpenAL capture device name; empty uses the system default microphone.</summary>
+    public string ReplayMicrophoneDevice { get; set; } = string.Empty;
 
     public double ReplayEntityStateRate { get; set; } = 2d;
 
@@ -201,6 +236,7 @@ public sealed class DirectorConfig
         OffscreenVideoBitrateKbps = Math.Clamp(OffscreenVideoBitrateKbps, 0, 1000000);
         NativeGameAudioDevice = NativeGameAudioDevice?.Trim() ?? string.Empty;
         NativeMicrophoneDevice = NativeMicrophoneDevice?.Trim() ?? string.Empty;
+        ReplayMicrophoneDevice = ReplayMicrophoneDevice?.Trim() ?? string.Empty;
         NativeGameAudioVolume = NormalizeVolume(NativeGameAudioVolume);
         NativeMicrophoneVolume = NormalizeVolume(NativeMicrophoneVolume);
         NativeAudioSampleRate = Math.Clamp(NativeAudioSampleRate, 8000, 192000);
@@ -217,6 +253,8 @@ public sealed class DirectorConfig
         ReplaySampleRate = Data.DirectorReplayMath.NormalizeSampleRate(ReplaySampleRate);
         ReplayMaxActors = Math.Clamp(ReplayMaxActors, 1, 2048);
         ReplaySnapshotRadiusChunks = Math.Clamp(ReplaySnapshotRadiusChunks, 0, 16);
+        ReplayRangeBelowBlocks = Math.Clamp(ReplayRangeBelowBlocks, 1, ReplayRangeMaxBlocks);
+        ReplayRangeAboveBlocks = Math.Clamp(ReplayRangeAboveBlocks, 1, ReplayRangeMaxBlocks);
         ReplayOutputDirectory = ReplayOutputDirectory?.Trim().Trim('"') ?? string.Empty;
         ReplayVoiceCaptureRadiusChunks = Math.Clamp(ReplayVoiceCaptureRadiusChunks, 0, 16);
         ReplayEntityStateRate = double.IsFinite(ReplayEntityStateRate)
@@ -310,11 +348,19 @@ public sealed class DirectorConfig
         ReplayCaptureWorld = source.ReplayCaptureWorld;
         ReplayPauseWorld = source.ReplayPauseWorld;
         ReplaySnapshotRadiusChunks = source.ReplaySnapshotRadiusChunks;
+        ReplayRangeBelowBlocks = source.ReplayRangeBelowBlocks;
+        ReplayRangeAboveBlocks = source.ReplayRangeAboveBlocks;
         ReplayOutputDirectory = source.ReplayOutputDirectory;
+        ReplayEmbedWorldIds = source.ReplayEmbedWorldIds;
+        ReplayListOtherWorlds = source.ReplayListOtherWorlds;
+        ReplayTheaterTeleport = source.ReplayTheaterTeleport;
         ReplayVoiceCaptureRadiusChunks = source.ReplayVoiceCaptureRadiusChunks;
         ReplayCaptureParticles = source.ReplayCaptureParticles;
         ReplayCaptureSounds = source.ReplayCaptureSounds;
         ReplayCaptureVoiceModAudio = source.ReplayCaptureVoiceModAudio;
+        ReplayCaptureAegisVoice = source.ReplayCaptureAegisVoice;
+        ReplayCaptureOwnMicrophone = source.ReplayCaptureOwnMicrophone;
+        ReplayMicrophoneDevice = source.ReplayMicrophoneDevice;
         ReplayEntityStateRate = source.ReplayEntityStateRate;
         ReplayMaxWorldEvents = source.ReplayMaxWorldEvents;
         ReplayApplyWorldSnapshot = source.ReplayApplyWorldSnapshot;

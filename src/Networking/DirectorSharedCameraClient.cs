@@ -23,7 +23,7 @@ internal sealed class DirectorSharedCameraClient
 
     public void RequestList()
     {
-        channel.SendPacket(new DirectorSharedCameraRequest
+        channel.TrySendPacket(new DirectorSharedCameraRequest
         {
             Action = (int)DirectorSharedCameraAction.List
         });
@@ -32,7 +32,7 @@ internal sealed class DirectorSharedCameraClient
     public void Publish(CameraPreset camera)
     {
         ArgumentNullException.ThrowIfNull(camera);
-        channel.SendPacket(new DirectorSharedCameraRequest
+        channel.TrySendPacket(new DirectorSharedCameraRequest
         {
             Action = (int)DirectorSharedCameraAction.Upsert,
             Camera = ToDto(camera)
@@ -41,7 +41,7 @@ internal sealed class DirectorSharedCameraClient
 
     public void Delete(Guid cameraId)
     {
-        channel.SendPacket(new DirectorSharedCameraRequest
+        channel.TrySendPacket(new DirectorSharedCameraRequest
         {
             Action = (int)DirectorSharedCameraAction.Delete,
             CameraId = cameraId.ToString("D")

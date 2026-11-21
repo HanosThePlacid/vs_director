@@ -68,7 +68,7 @@ internal sealed class DirectorChunkPreloadClient : IDisposable
             DirectorChunkPreloadRuntime.Set(columns);
         }
 
-        channel.SendPacket(request);
+        channel.TrySendPacket(request);
         activeReplayId = replayCode;
         activePlanHash = planHash;
         lastSentMs = now;
@@ -81,7 +81,7 @@ internal sealed class DirectorChunkPreloadClient : IDisposable
             return;
         }
 
-        channel.SendPacket(new DirectorChunkPreloadRequest { Active = false });
+        channel.TrySendPacket(new DirectorChunkPreloadRequest { Active = false });
         activeReplayId = string.Empty;
         activePlanHash = 0;
         lastSentMs = capi.ElapsedMilliseconds;

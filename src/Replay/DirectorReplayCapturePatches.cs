@@ -1496,11 +1496,21 @@ internal static class ReplaySoundCapturePatch
             pitch,
             range,
             soundType);
-        return !DirectorFollowSoundIsolation.ShouldSuppressObserverRelativeSound(
+        bool suppress = DirectorFollowSoundIsolation.ShouldSuppressObserverRelativeSound(
             x,
             y,
             z,
             soundType);
+        if (suppress)
+        {
+            // The follow camera silences the live copy of listener-relative
+            // sounds (notably the local player's hurt sound), which means no
+            // LoadedSoundNative ever starts and the generic hook cannot see
+            // them. Record the event directly so it survives into the replay.
+            DirectorReplayRuntime.Manager?.CaptureSoundAt(
+                location, x, y, z, volume, pitch, range, soundType);
+        }
+        return !suppress;
     }
 
     [HarmonyTranspiler]
@@ -1536,6 +1546,19 @@ internal static class ReplaySoundCapturePatch
                 $"Expected one ClientMain sound-distance check, found {replacements}.");
         }
     }
+}
+
+/// <summary>
+/// Damage audio is driven by the hurt event, not by a guaranteed client-side
+/// sound start. Record it from the entity event so distant/combat damage is
+/// audible in the replay even when the observing client never played it.
+/// </summary>
+[HarmonyPatch(typeof(Entity), nameof(Entity.OnHurt), new[] { typeof(DamageSource), typeof(float) })]
+internal static class ReplayEntityHurtCapturePatch
+{
+    [HarmonyPostfix]
+    private static void Postfix(Entity __instance, DamageSource dmgSource, float damage)
+        => DirectorReplayRuntime.Manager?.CaptureHurtSound(__instance, damage);
 }
 
 [HarmonyPatch(

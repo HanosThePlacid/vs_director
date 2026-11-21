@@ -158,7 +158,7 @@ internal sealed partial class DirectorCreationRuntime
         channel.SetMessageHandler<DirectorPerformanceStatus>(OnPerformanceStatus);
         var position = (Session.Frame?.Objects.GetValueOrDefault(actor.Id)?.World.Translation is { } p ? CreationVector.From(p) : actor.Transform.Position) + project.Origin;
         var body = actor.PlayerBody;
-        channel.SendPacket(new DirectorPerformanceRequest { Session = performanceSession, X = position.X, Y = position.Y, Z = position.Z, Dimension = project.Dimension, Yaw = (float)(actor.Transform.Rotation.Y * Math.PI / 180),
+        channel.TrySendPacket(new DirectorPerformanceRequest { Session = performanceSession, X = position.X, Y = position.Y, Z = position.Z, Dimension = project.Dimension, Yaw = (float)(actor.Transform.Rotation.Y * Math.PI / 180),
             CustomBody = body.Enabled, BodyWidth = body.Width, BodyHeight = body.Height, SneakHeight = body.SneakHeight, EyeHeight = body.EyeHeight });
         Status = L("creation-recording-waiting");
     }
@@ -183,7 +183,7 @@ internal sealed partial class DirectorCreationRuntime
         if (!channel.Connected) throw new InvalidOperationException(L("creation-recording-unavailable"));
         if (body is not null && (!body.Enabled || !body.Valid())) throw new InvalidOperationException(L("creation-player-body-enable-first"));
         channel.SetMessageHandler<DirectorPerformanceStatus>(OnPerformanceStatus);
-        channel.SendPacket(new DirectorPerformanceRequest { Session = Guid.NewGuid().ToString(), Action = body is null ? 5 : 4, CustomBody = body is not null,
+        channel.TrySendPacket(new DirectorPerformanceRequest { Session = Guid.NewGuid().ToString(), Action = body is null ? 5 : 4, CustomBody = body is not null,
             BodyWidth = body?.Width ?? 0, BodyHeight = body?.Height ?? 0, SneakHeight = body?.SneakHeight ?? 0, EyeHeight = body?.EyeHeight ?? 0 });
     }
     private void TickPerformance(float delta)
@@ -197,7 +197,7 @@ internal sealed partial class DirectorCreationRuntime
         if (!observingWorldActor && api.World.ElapsedMilliseconds - performanceHeartbeat > 1000)
         {
             performanceHeartbeat = api.World.ElapsedMilliseconds;
-            api.Network.GetChannel(DirectorNetwork.ChannelName).SendPacket(new DirectorPerformanceRequest { Session = performanceSession, Action = 2 });
+            api.Network.GetChannel(DirectorNetwork.ChannelName).TrySendPacket(new DirectorPerformanceRequest { Session = performanceSession, Action = 2 });
         }
         if (!performanceRunning && countdown < 0 && api.World.ElapsedMilliseconds - performanceRequested > 15000)
         { StopPerformance(); Status = L("creation-recording-timeout"); return; }
@@ -213,7 +213,7 @@ internal sealed partial class DirectorCreationRuntime
                 if (!manager.StartRecording(Session.Project!.Name + " - performance", out var error)) throw new InvalidOperationException(error);
                 ownsReplayCapture = true;
                 if (!manager.StartLiveActionRecording("", Session.Project.Objects.First(o => o.Id == performanceActor).Name, out _, out error)) throw new InvalidOperationException(error);
-                api.Network.GetChannel(DirectorNetwork.ChannelName).SendPacket(new DirectorPerformanceRequest { Session = performanceSession, Action = 3 });
+                api.Network.GetChannel(DirectorNetwork.ChannelName).TrySendPacket(new DirectorPerformanceRequest { Session = performanceSession, Action = 3 });
                 performanceRunning = true; Session.ExternalRecording = true; Session.Play(true); Status = L("creation-recording-active");
             }
         }
@@ -232,7 +232,7 @@ internal sealed partial class DirectorCreationRuntime
             performanceRunning = false; Session.Play(false);
             Status = L("creation-recording-finishing");
             owner.EndCreationPerformanceControl(performanceView);
-            api.Network.GetChannel(DirectorNetwork.ChannelName).SendPacket(new DirectorPerformanceRequest { Session = performanceSession, Action = 1 });
+            api.Network.GetChannel(DirectorNetwork.ChannelName).TrySendPacket(new DirectorPerformanceRequest { Session = performanceSession, Action = 1 });
             return;
         }
         if (send && stoppingAt > 0) return;
@@ -240,7 +240,7 @@ internal sealed partial class DirectorCreationRuntime
         Guid recordedBackground = Guid.Empty;
         try
         {
-            if (send && !observingWorldActor) api.Network.GetChannel(DirectorNetwork.ChannelName).SendPacket(new DirectorPerformanceRequest { Session = id, Action = 1 });
+            if (send && !observingWorldActor) api.Network.GetChannel(DirectorNetwork.ChannelName).TrySendPacket(new DirectorPerformanceRequest { Session = id, Action = 1 });
             var manager = DirectorReplayRuntime.Manager;
             DirectorActionAsset? action = stoppedAction;
             if (performanceRunning && manager?.StopLiveActionRecording(out var recorded, out _, out _) == true) action = recorded;

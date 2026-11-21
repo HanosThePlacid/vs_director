@@ -45,6 +45,13 @@ public static class DirectorPermissions
     public static readonly DirectorPermission DefaultPlayerPermissions
         = DirectorPermission.OffscreenCurrentView;
 
+    /// <summary>Granted when the server does not run VS Director.</summary>
+    public static readonly DirectorPermission ClientOnlyPermissions
+        = DirectorPermission.All
+            & ~DirectorPermission.SharedCameras
+            & ~DirectorPermission.RemoteChunkAccess
+            & ~DirectorPermission.ActorRecording;
+
     public static readonly IReadOnlyList<DirectorPermissionDefinition> Definitions =
         new[]
         {

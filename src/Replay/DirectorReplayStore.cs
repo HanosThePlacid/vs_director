@@ -19,6 +19,18 @@ internal sealed record DirectorReplayInfo(
     public string Description { get; init; } = string.Empty;
 
     public IReadOnlyList<string> Tags { get; init; } = Array.Empty<string>();
+
+    /// <summary>The world the replay was recorded in.</summary>
+    public string WorldId { get; init; } = string.Empty;
+
+    /// <summary>Readable name of that world; empty for the current world.</summary>
+    public string WorldLabel { get; init; } = string.Empty;
+
+    /// <summary>True when the replay was recorded in a world other than the one that is open.</summary>
+    public bool OtherWorld { get; init; }
+
+    /// <summary>The name to show in lists: other-world replays carry their world's label.</summary>
+    public string ListName => OtherWorld && WorldLabel.Length > 0 ? $"{Name}  [{WorldLabel}]" : Name;
 }
 
 internal sealed class DirectorReplayStore : IDisposable
@@ -33,7 +45,9 @@ internal sealed class DirectorReplayStore : IDisposable
 
     private readonly ICoreClientAPI capi;
     private readonly string worldId;
+    private readonly string root;
     private readonly string directory;
+    private readonly bool includeOtherWorlds;
     private readonly object indexGate = new();
     private readonly Dictionary<string, DirectorReplayInfo> indexedByPath =
         new(StringComparer.OrdinalIgnoreCase);
@@ -44,14 +58,87 @@ internal sealed class DirectorReplayStore : IDisposable
     private string indexError = string.Empty;
     private bool disposed;
 
-    public DirectorReplayStore(ICoreClientAPI capi, string worldId, string outputDirectory = "")
+    public DirectorReplayStore(
+        ICoreClientAPI capi,
+        string worldId,
+        string outputDirectory = "",
+        bool includeOtherWorlds = true)
     {
         this.capi = capi;
         this.worldId = worldId;
-        string root = ResolveRoot(capi, outputDirectory);
+        this.includeOtherWorlds = includeOtherWorlds;
+        root = ResolveRoot(capi, outputDirectory);
         directory = Path.Combine(root, BuildWorldDirectory(worldId));
         Directory.CreateDirectory(directory);
         BeginIndexRefresh();
+    }
+
+    /// <summary>Folder that holds this world's replays and its world file.</summary>
+    public string WorldDirectory => directory;
+
+    public DirectorReplayWorldFile? LoadWorldFile()
+        => DirectorReplayWorldFile.TryLoad(DirectorReplayWorldFile.PathIn(directory));
+
+    public void SaveWorldFile(DirectorReplayWorldFile file)
+        => DirectorReplayWorldFile.Save(DirectorReplayWorldFile.PathIn(directory), file);
+
+    /// <summary>
+    /// The world file that belongs to a replay: the one in its world folder.
+    /// A replay sits either directly in that folder or in a session subfolder.
+    /// </summary>
+    public DirectorReplayWorldFile? LoadWorldFileFor(string replayPath)
+    {
+        string? folder = Path.GetDirectoryName(Path.GetFullPath(replayPath));
+        string rootPath = Path.GetFullPath(root);
+        while (!string.IsNullOrEmpty(folder)
+            && folder.Length > rootPath.Length
+            && folder.StartsWith(rootPath, StringComparison.OrdinalIgnoreCase))
+        {
+            if (DirectorReplayWorldFile.TryLoad(DirectorReplayWorldFile.PathIn(folder)) is { } file)
+            {
+                return file;
+            }
+
+            folder = Path.GetDirectoryName(folder);
+        }
+
+        return null;
+    }
+
+    /// <summary>Every world folder under the replay root that has a world file, newest first.</summary>
+    public IReadOnlyList<(string Directory, DirectorReplayWorldFile File, int ReplayCount)> ListWorlds()
+    {
+        List<(string, DirectorReplayWorldFile, int)> worlds = new();
+        if (!Directory.Exists(root))
+        {
+            return worlds;
+        }
+
+        foreach (string folder in Directory.EnumerateDirectories(root))
+        {
+            int replays;
+            try
+            {
+                replays = Directory.EnumerateFiles(folder, "*.vsdreplay.gz", SearchOption.AllDirectories).Count();
+            }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+            {
+                continue;
+            }
+
+            DirectorReplayWorldFile? file = DirectorReplayWorldFile.TryLoad(DirectorReplayWorldFile.PathIn(folder));
+            if (file is null && replays == 0)
+            {
+                continue;
+            }
+
+            worlds.Add((folder, file ?? new DirectorReplayWorldFile(), replays));
+        }
+
+        return worlds
+            .OrderByDescending(world => world.Item2.World.CapturedUtc)
+            .ThenBy(world => world.Item1, StringComparer.OrdinalIgnoreCase)
+            .ToArray();
     }
     internal static string ResolveRoot(ICoreClientAPI api, string configured)
     {
@@ -393,6 +480,11 @@ internal sealed class DirectorReplayStore : IDisposable
                     }
                 }
             }
+
+            if (includeOtherWorlds)
+            {
+                IndexOtherWorlds(token);
+            }
         }
         catch (OperationCanceledException)
         {
@@ -407,9 +499,102 @@ internal sealed class DirectorReplayStore : IDisposable
         }
     }
 
-    private DirectorReplayInfo? TryReadMetadata(string replayPath)
+    /// <summary>
+    /// Lists the replays of every other world folder under the replay root.
+    /// They stay where they are: only their edits and cached details are kept
+    /// in this world's folder.
+    /// </summary>
+    private void IndexOtherWorlds(CancellationToken token)
     {
-        string metadataPath = MetadataPath(replayPath);
+        string current = Path.GetFullPath(directory);
+        foreach (string folder in Directory.EnumerateDirectories(root))
+        {
+            token.ThrowIfCancellationRequested();
+            if (string.Equals(Path.GetFullPath(folder), current, StringComparison.OrdinalIgnoreCase))
+            {
+                continue;
+            }
+
+            string[] files;
+            try
+            {
+                files = Directory.EnumerateFiles(folder, "*.vsdreplay.gz", SearchOption.AllDirectories).ToArray();
+            }
+            catch (Exception exception) when (exception is IOException or UnauthorizedAccessException)
+            {
+                continue;
+            }
+
+            if (files.Length == 0)
+            {
+                continue;
+            }
+
+            DirectorReplayWorldFile? world = DirectorReplayWorldFile.TryLoad(DirectorReplayWorldFile.PathIn(folder));
+            string label = world?.World.Label is { Length: > 0 } named ? named : Path.GetFileName(folder);
+            lock (indexGate)
+            {
+                token.ThrowIfCancellationRequested();
+                totalFiles += files.Length;
+            }
+
+            foreach (string path in files)
+            {
+                token.ThrowIfCancellationRequested();
+                try
+                {
+                    // Prefer this world's cached copy, then the details the
+                    // recording world wrote beside the replay; reading the
+                    // replay itself is the slow last resort.
+                    DirectorReplayInfo? info = TryReadMetadata(path, anyWorld: true)
+                        ?? TryReadMetadataFile(path + ".meta.json", path, anyWorld: true);
+                    if (info is null)
+                    {
+                        DirectorReplayDocument replay = DirectorReplayIO.Load(path);
+                        info = ToInfo(path, replay) with { WorldId = replay.WorldId };
+                        WriteMetadata(path, info);
+                    }
+
+                    if (string.Equals(info.WorldId, worldId, StringComparison.Ordinal))
+                    {
+                        // Same world reached through another folder name; the
+                        // local index already owns it when it is in this folder.
+                        info = info with { OtherWorld = false, WorldLabel = string.Empty };
+                    }
+                    else
+                    {
+                        info = info with { OtherWorld = true, WorldLabel = label };
+                    }
+
+                    lock (indexGate)
+                    {
+                        token.ThrowIfCancellationRequested();
+                        indexedByPath[path] = info;
+                    }
+                }
+                catch (Exception exception) when (exception is not OperationCanceledException)
+                {
+                    capi.Logger.Warning(
+                        "VS Director: ignored unreadable replay {0}: {1}",
+                        path,
+                        exception.Message);
+                }
+                finally
+                {
+                    lock (indexGate)
+                    {
+                        if (!token.IsCancellationRequested) indexedFiles++;
+                    }
+                }
+            }
+        }
+    }
+
+    private DirectorReplayInfo? TryReadMetadata(string replayPath, bool anyWorld = false)
+        => TryReadMetadataFile(MetadataPath(replayPath), replayPath, anyWorld);
+
+    private DirectorReplayInfo? TryReadMetadataFile(string metadataPath, string replayPath, bool anyWorld)
+    {
         if (!File.Exists(metadataPath))
         {
             return null;
@@ -421,7 +606,8 @@ internal sealed class DirectorReplayStore : IDisposable
         if (metadata is null
             || metadata.SourceLength != replayFile.Length
             || metadata.SourceLastWriteUtcTicks != replayFile.LastWriteTimeUtc.Ticks
-            || !string.Equals(metadata.WorldId, worldId, StringComparison.Ordinal))
+            || string.IsNullOrEmpty(metadata.WorldId)
+            || (!anyWorld && !string.Equals(metadata.WorldId, worldId, StringComparison.Ordinal)))
         {
             return null;
         }
@@ -435,7 +621,8 @@ internal sealed class DirectorReplayStore : IDisposable
             metadata.ActorCount)
         {
             Description = metadata.Description?.Trim() ?? string.Empty,
-            Tags = NormalizeTags(metadata.Tags)
+            Tags = NormalizeTags(metadata.Tags),
+            WorldId = metadata.WorldId
         };
     }
 
@@ -447,7 +634,7 @@ internal sealed class DirectorReplayStore : IDisposable
             SchemaVersion = 2,
             SourceLength = replayFile.Length,
             SourceLastWriteUtcTicks = replayFile.LastWriteTimeUtc.Ticks,
-            WorldId = worldId,
+            WorldId = info.WorldId.Length > 0 ? info.WorldId : worldId,
             Id = info.Id,
             Name = info.Name,
             Description = info.Description,
@@ -482,7 +669,8 @@ internal sealed class DirectorReplayStore : IDisposable
 
     private static DirectorReplayInfo ToInfo(string path, DirectorReplayDocument replay)
         => new(path, replay.Id, replay.Name, replay.CreatedUtc, replay.DurationSeconds, replay.Actors.Count)
-        { Tags = replay.SessionMerge is not null ? ["Director", "merged"] : [],
+        { WorldId = replay.WorldId ?? string.Empty,
+          Tags = replay.SessionMerge is not null ? ["Director", "merged"] : [],
           Description = replay.SessionMerge is { } merge ? $"Session {merge.SessionId}; {merge.Replays.Count} sources; clock uncertainty {merge.MaxClockUncertaintyUs / 1000d:0.###} ms. "
               + string.Join(" ", merge.Warnings) : "" };
 

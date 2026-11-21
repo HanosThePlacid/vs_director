@@ -32,6 +32,8 @@ public static class DirectorReplayMath
             Id = source?.Id is { } id && id != Guid.Empty ? id : Guid.NewGuid(),
             Name = string.IsNullOrWhiteSpace(source?.Name) ? "Replay" : source.Name.Trim(),
             WorldId = source?.WorldId?.Trim() ?? string.Empty,
+            World = source?.World?.Copy(),
+            Ids = source?.Ids is { IsEmpty: false } ids ? ids : null,
             ServerRecording = source?.ServerRecording?.Copy(),
             ServerReplay = source?.ServerReplay?.Copy(),
             SessionMerge = source?.SessionMerge?.Copy(),
@@ -1405,6 +1407,10 @@ public static class DirectorReplayMath
             MotionY = NormalizeFinite(source.MotionY),
             MotionZ = NormalizeFinite(source.MotionZ),
             HasRenderState = source.HasRenderState,
+            // Normalization runs on save, so dropping the recorded hurt tint here
+            // erases every damage flash from the replay before playback can read it.
+            HasRenderColor = source.HasRenderColor,
+            RenderColor = source.RenderColor,
             OnGround = source.OnGround,
             FeetInLiquid = source.FeetInLiquid,
             Swimming = source.Swimming,
@@ -1871,6 +1877,12 @@ public static class DirectorReplayMath
         DirectorReplayActorSample destination)
     {
         destination.HasRenderState = source.HasRenderState;
+        // Entity hurt flashes live in RenderColor (the client recomputes it from
+        // the invulnerable timer each tick, which replay ghosts never do). Keep
+        // it through copies and step interpolation or ApplyReplayPose resets the
+        // tint to white and the recorded flash disappears.
+        destination.HasRenderColor = source.HasRenderColor;
+        destination.RenderColor = source.RenderColor;
         destination.OnGround = source.OnGround;
         destination.FeetInLiquid = source.FeetInLiquid;
         destination.Swimming = source.Swimming;

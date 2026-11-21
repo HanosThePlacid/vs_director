@@ -74,7 +74,7 @@ internal static class DirectorFollowSoundIsolation
         }
 
         LoadedSoundNative[] sounds;
-        lock (gate)
+        using (DirectorGameLock.Enter(gate))
         {
             sounds = loaded.Cast<object>().OfType<LoadedSoundNative>().ToArray();
         }

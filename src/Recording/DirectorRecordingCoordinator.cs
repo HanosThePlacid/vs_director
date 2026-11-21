@@ -9,8 +9,11 @@ internal sealed class DirectorRecordingCoordinator : IDisposable
 {
     private readonly ICoreClientAPI capi;
     private readonly DirectorConfig config;
-    private readonly IClientNetworkChannel channel;
+    // Local mode: the server-side session runtime was removed upstream, so this
+    // client arms and drives OBS itself instead of waiting for server control packets.
+    private const int LocalStartDelayMilliseconds = 500;
     private readonly Func<DirectorRecordingTrack, bool, (bool Success, string Error)> activateTrack;
+    private readonly Func<Guid?, DirectorRecordingTrack?> resolveTrack;
     private readonly Action<bool> inputLockHandler;
     private DirectorObsWebSocketClient? obsClient;
     private Task? obsPrepareTask;
@@ -25,15 +28,14 @@ internal sealed class DirectorRecordingCoordinator : IDisposable
         ICoreClientAPI capi,
         DirectorConfig config,
         Func<DirectorRecordingTrack, bool, (bool Success, string Error)> activateTrack,
+        Func<Guid?, DirectorRecordingTrack?> resolveTrack,
         Action<bool> inputLockHandler)
     {
         this.capi = capi;
         this.config = config;
         this.activateTrack = activateTrack;
+        this.resolveTrack = resolveTrack;
         this.inputLockHandler = inputLockHandler;
-        channel = capi.Network.GetChannel(DirectorNetwork.ChannelName)
-            .SetMessageHandler<DirectorRecordingControl>(OnControl)
-            .SetMessageHandler<DirectorRecordingSessionStatus>(OnSessionStatus);
     }
 
     public DirectorRecordingState State { get; private set; }
@@ -52,26 +54,14 @@ internal sealed class DirectorRecordingCoordinator : IDisposable
 
     public event Action<DirectorRecordingState, string>? StateChanged;
 
-    public event Action<DirectorRecordingSessionStatus>? ServerStatusReceived;
-
     public event Action<DirectorRecordingTrack>? SourceCaptureStopped;
 
     public void RegisterWorker(DirectorRecordingTrack track)
-    {
-        ArgumentNullException.ThrowIfNull(track);
-        channel.SendPacket(new DirectorRecordingWorkerRegistration
-        {
-            Active = true,
-            TrackId = track.Id.ToString("D"),
-            TrackName = track.Name,
-            SourceType = (int)track.SourceType,
-            SourceId = track.SourceId == Guid.Empty ? string.Empty : track.SourceId.ToString("D"),
-            Enabled = track.Enabled
-        });
-    }
+        => ArgumentNullException.ThrowIfNull(track);
 
     public void UnregisterWorker()
-        => channel.SendPacket(new DirectorRecordingWorkerRegistration { Active = false });
+    {
+    }
 
     public bool RequestStart(out string error, Guid? expectedTrackId = null)
     {
@@ -86,14 +76,40 @@ internal sealed class DirectorRecordingCoordinator : IDisposable
         LastOutputPath = string.Empty;
         LastActualStartUtc = default;
         pendingTerminalError = string.Empty;
+        DirectorRecordingTrack? track = resolveTrack(expectedTrackId);
+        if (expectedTrackId is not null && track is null)
+        {
+            error = "track-not-found";
+            return false;
+        }
+        track ??= new DirectorRecordingTrack
+        {
+            Id = Guid.Empty,
+            Name = "Program",
+            SourceType = DirectorRecordingSourceType.Program,
+            Enabled = true
+        };
+
         SetState(DirectorRecordingState.Requesting, "start-requested");
-        channel.SendPacket(new DirectorRecordingSessionRequest
+        DateTimeOffset startUtc = DateTimeOffset.UtcNow.AddMilliseconds(LocalStartDelayMilliseconds);
+        Arm(new DirectorRecordingControl
         {
             Action = (int)DirectorRecordingSessionAction.Start,
+            SessionId = Guid.NewGuid().ToString("N"),
+            StartUtcTicks = startUtc.UtcTicks,
+            StartDelayMilliseconds = LocalStartDelayMilliseconds,
             FramesPerSecond = DirectorTimecode.NormalizeFrameRate(config.RecordingFrameRate),
             Container = (int)DirectorRecordingContainer.Mp4,
-            ExpectedTrackId = expectedTrackId?.ToString("D") ?? string.Empty
+            TrackId = track.Id.ToString("D"),
+            TrackName = track.Name,
+            SourceType = (int)track.SourceType,
+            SourceId = track.SourceId == Guid.Empty ? string.Empty : track.SourceId.ToString("D"),
         });
+        if (State == DirectorRecordingState.Error)
+        {
+            error = LastError;
+            return false;
+        }
         return true;
     }
 
@@ -106,10 +122,7 @@ internal sealed class DirectorRecordingCoordinator : IDisposable
             return false;
         }
 
-        channel.SendPacket(new DirectorRecordingSessionRequest
-        {
-            Action = (int)DirectorRecordingSessionAction.Stop
-        });
+        StopLocal(sendReport: false);
         return true;
     }
 
@@ -119,10 +132,8 @@ internal sealed class DirectorRecordingCoordinator : IDisposable
             : RequestStop(out error);
 
     public void RequestStatus()
-        => channel.SendPacket(new DirectorRecordingSessionRequest
-        {
-            Action = (int)DirectorRecordingSessionAction.Status
-        });
+    {
+    }
 
     public void RefreshConfiguration()
     {
@@ -547,28 +558,11 @@ internal sealed class DirectorRecordingCoordinator : IDisposable
         string message,
         string outputPath = "")
     {
-        if (string.IsNullOrWhiteSpace(sessionId))
-        {
-            return;
-        }
-
-        channel.SendPacket(new DirectorRecordingWorkerReport
-        {
-            SessionId = sessionId,
-            Phase = (int)phase,
-            Message = message,
-            OutputPath = outputPath
-        });
-    }
-
-    private void OnSessionStatus(DirectorRecordingSessionStatus status)
-    {
-        ServerStatusReceived?.Invoke(status);
-        if (State == DirectorRecordingState.Requesting
-            && status.Phase == (int)DirectorRecordingWorkerPhase.Error)
-        {
-            Fail(status.Message, sendReport: false);
-        }
+        // Local mode: no server session runtime exists to receive worker reports.
+        _ = sessionId;
+        _ = phase;
+        _ = message;
+        _ = outputPath;
     }
 
     private void SetState(DirectorRecordingState state, string detail)

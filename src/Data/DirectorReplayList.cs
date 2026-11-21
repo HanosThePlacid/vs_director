@@ -15,6 +15,23 @@ public sealed class DirectorReplayList<T> : IList<T>, IReadOnlyList<T>
     internal bool TrySearchTime(double time, bool inclusive, out int index)
     { index = searchTime?.Invoke(time, inclusive) ?? -1; return searchTime is not null; }
     public static implicit operator DirectorReplayList<T>(List<T> source) => new(source);
+    /// <summary>
+    /// A view whose elements pass through <paramref name="map"/> on every read.
+    /// A paged list stays paged and keeps its time index; an in-memory list is
+    /// mapped once so it stays editable. The map must not mutate its argument:
+    /// paged elements are shared with the page cache.
+    /// </summary>
+    internal DirectorReplayList<T> Project(Func<T, T> map)
+    {
+        ArgumentNullException.ThrowIfNull(map);
+        if (items is not null)
+        {
+            return new DirectorReplayList<T>(items.Select(map));
+        }
+
+        Func<int, T> inner = read!;
+        return new DirectorReplayList<T>(count, index => map(inner(index)), searchTime);
+    }
     public bool IsPaged => read is not null;
     public int Count => items?.Count ?? count;
     public bool IsReadOnly => IsPaged;

@@ -51,6 +51,18 @@ public sealed class DirectorReplayPages
     }
     private DirectorReplayPages(string path, Header header) { this.path = path; this.header = header; }
     public IReadOnlyList<BlockIndex> BlockPositions => header.Blocks;
+
+    /// <summary>Keeps the in-memory block index aligned with a replay's translated dimensions.</summary>
+    internal void NormalizeBlockIndexDimension(int dimension)
+    {
+        foreach (BlockIndex index in header.Blocks)
+        {
+            if (index.Dimension != dimension)
+            {
+                index.Dimension = dimension;
+            }
+        }
+    }
     // Export uses its own cache so sequential PCM reads cannot evict the
     // current playback's actor working set.
     public DirectorReplayList<DirectorReplayVoiceFrame> OpenVoiceView()
@@ -221,6 +233,7 @@ public sealed class DirectorReplayPages
         h.Document = new DirectorReplayDocument
         {
             SchemaVersion = document.SchemaVersion, Id = document.Id, Name = document.Name, WorldId = document.WorldId,
+            World = document.World, Ids = document.Ids,
             CreatedUtc = document.CreatedUtc, SampleRate = document.SampleRate, DurationSeconds = document.DurationSeconds,
             CaptureScope = document.CaptureScope, ServerRecording = document.ServerRecording, ServerReplay = document.ServerReplay,
             SessionMerge = document.SessionMerge, IncludesWorldSnapshot = document.IncludesWorldSnapshot,

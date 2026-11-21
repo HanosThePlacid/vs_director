@@ -43,7 +43,7 @@ internal sealed class DirectorAnchorClient : IDisposable
     {
         AccessKnown = false;
         AccessAllowed = false;
-        channel.SendPacket(new DirectorAnchorRequest { Active = false });
+        channel.TrySendPacket(new DirectorAnchorRequest { Active = false });
         lastSentMs = capi.ElapsedMilliseconds;
     }
 
@@ -135,7 +135,7 @@ internal sealed class DirectorAnchorClient : IDisposable
         {
             return;
         }
-        channel.SendPacket(new DirectorAnchorRequest
+        channel.TrySendPacket(new DirectorAnchorRequest
         {
             Active = true,
             X = pose.X,
@@ -183,7 +183,7 @@ internal sealed class DirectorAnchorClient : IDisposable
             return;
         }
 
-        channel.SendPacket(new DirectorAnchorRequest { Active = false });
+        channel.TrySendPacket(new DirectorAnchorRequest { Active = false });
         anchorActive = false;
         lastChunkX = int.MinValue;
         lastChunkZ = int.MinValue;

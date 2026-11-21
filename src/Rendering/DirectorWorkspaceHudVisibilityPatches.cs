@@ -57,3 +57,31 @@ internal static class DirectorWorkspaceAimAccuracyVisibilityPatch
     [HarmonyPrefix]
     private static bool Prefix() => !DirectorWorkspaceViewportRuntime.HideGameHud;
 }
+
+/// <summary>
+/// Hides Ortho-stage renderers registered by other mods while the game HUD is hidden.
+/// The workspace keeps the Ortho stage running for its own GUI, which used to leave
+/// mod HUD overlays visible in hidden-HUD shots.
+/// </summary>
+[HarmonyPatch(typeof(ClientEventManager), nameof(ClientEventManager.TriggerRenderStage))]
+internal static class DirectorWorkspaceModOverlayVisibilityPatch
+{
+    [HarmonyPrefix]
+    private static bool Prefix(ClientEventManager __instance, EnumRenderStage stage, float dt)
+    {
+        if (stage != EnumRenderStage.Ortho || !DirectorWorkspaceViewportRuntime.HideGameHud)
+        {
+            return true;
+        }
+        List<RenderHandler> renderers = __instance.renderersByStage[(int)stage];
+        for (int i = 0; i < renderers.Count; i++)
+        {
+            IRenderer renderer = renderers[i].Renderer;
+            if (DirectorWorkspaceViewportRuntime.ShouldRenderOrthoRenderer(renderer))
+            {
+                renderer.OnRenderFrame(dt, stage);
+            }
+        }
+        return false;
+    }
+}

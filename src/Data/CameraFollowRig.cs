@@ -78,6 +78,12 @@ public sealed class CameraFollowRig
 
     public float Fov { get; set; } = CameraFollowMath.DefaultFov;
 
+    /// <summary>Orbit angle measured from world north instead of the target's facing.</summary>
+    public bool WorldAligned { get; set; }
+
+    /// <summary>Extra camera roll in degrees (Dutch angle).</summary>
+    public double RollDegrees { get; set; }
+
     /// <summary>
     /// Optional Alt+number quick-switch slot. Valid values are 1 through 10.
     /// </summary>
@@ -113,6 +119,8 @@ public sealed class CameraFollowRig
             SmoothTimeSeconds = SmoothTimeSeconds,
             DelaySeconds = DelaySeconds,
             Fov = Fov,
+            WorldAligned = WorldAligned,
+            RollDegrees = RollDegrees,
             QuickSlot = QuickSlot,
             CreatedUtc = CreatedUtc,
             ModifiedUtc = ModifiedUtc

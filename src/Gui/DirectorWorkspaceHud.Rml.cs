@@ -95,7 +95,13 @@ internal sealed partial class DirectorWorkspaceHud
 
     private IEnumerable<(string Key, string Label)> InspectorSections(bool visual)
     {
-        if (!visual) return new[] { ("general", RmlLabel("inspector-section-general")), ("details", RmlLabel("inspector-section-details")) };
+        if (!visual)
+        {
+            IEnumerable<(string Key, string Label)> sections = new[] { ("general", RmlLabel("inspector-section-general")), ("details", RmlLabel("inspector-section-details")) };
+            return section == DirectorWorkspaceSection.Replay
+                ? sections.Append(("range", RmlLabel("inspector-section-range")))
+                : sections;
+        }
         if (section == DirectorWorkspaceSection.Replay)
             return ReplayVisualGroupDefinitions.Select(g => (g.Code, RmlLabel("replay-visual-group-" + g.Code)));
         string[] keys = section switch
@@ -298,6 +304,17 @@ internal sealed partial class DirectorWorkspaceHud
             form.Text(RmlLabel("tags"), tags, v => { tags = v; Save(); });
             InspectorSection(form, "details");
             form.Text(RmlLabel("description"), description, v => { description = v; Save(); });
+            InspectorSection(form, "range");
+            DirectorConfig config = owner.Config;
+            form.Slider(RmlLabel("replay-range-below"), config.ReplayRangeBelowBlocks,
+                1, DirectorConfig.ReplayRangeMaxBlocks, 1,
+                v => owner.SetReplayRange(blocksBelow: (int)Math.Round(v)));
+            form.Slider(RmlLabel("replay-range-above"), config.ReplayRangeAboveBlocks,
+                1, DirectorConfig.ReplayRangeMaxBlocks, 1,
+                v => owner.SetReplayRange(blocksAbove: (int)Math.Round(v)));
+            form.Slider(RmlLabel("replay-range-radius"), Math.Clamp(config.ReplaySnapshotRadiusChunks, 1, 16),
+                1, 16, 1,
+                v => owner.SetReplayRange(radiusChunks: (int)Math.Round(v)));
             return;
         }
         form.EndSection();

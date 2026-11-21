@@ -52,7 +52,7 @@ internal readonly record struct DirectorReplayPreloadEditorState(
     IReadOnlyList<DirectorReplayPreloadColumn> IncludedColumns,
     IReadOnlyList<DirectorReplayPreloadColumn> ExcludedColumns);
 
-internal sealed class DirectorReplayManager : IDisposable
+internal sealed partial class DirectorReplayManager : IDisposable
 {
     private const double TimeEpsilon = 0.000001d;
     private const int PendingBlockChangesPerTick = 64;
@@ -526,6 +526,17 @@ internal sealed class DirectorReplayManager : IDisposable
         => playback is { PreparedTimeSeconds: >= 0d } active
             ? active.PreparedTimeSeconds
             : PlaybackTimeSeconds;
+
+    /// <summary>
+    /// Clock for camera elements: the content clock, except while a time effect
+    /// (rewind, stutter, freeze with moving camera) keeps the camera on the logical timeline.
+    /// </summary>
+    internal double PreparedCameraTimeSeconds
+        => playback is { PreparedCameraTimeSeconds: >= 0d } active
+            ? active.PreparedCameraTimeSeconds
+            : PreparedPlaybackTimeSeconds;
+
+    internal double PreparedRewindAmount => playback?.PreparedRewindAmount ?? 0d;
 
     public double PlaybackDurationSeconds
         => playback?.Document.DurationSeconds
@@ -1743,8 +1754,10 @@ internal sealed class DirectorReplayManager : IDisposable
         }
 
         RetireStore(store);
-        try { store = new DirectorReplayStore(capi, worldId, config.ReplayOutputDirectory); }
+        currentWorld = null;
+        try { store = new DirectorReplayStore(capi, worldId, config.ReplayOutputDirectory, config.ReplayListOtherWorlds); }
         catch (Exception e) { store = null; capi.Logger.Error("VS Director replay directory: {0}", e.Message); capi.ShowChatMessage(Lang.Get("vsdirector:replay-directory-error", e.Message)); }
+        EnsureCurrentWorld(forceWrite: false, out _);
     }
 
     public void LeaveWorld()
@@ -1768,8 +1781,10 @@ internal sealed class DirectorReplayManager : IDisposable
         if (string.IsNullOrEmpty(capi.World?.SavegameIdentifier)) return;
         if (IsRecording || HasPendingSave || IsPlaying || IsLoading || IsExporting)
             throw new InvalidOperationException("Stop recording, playback and export, and finish saving before changing the replay directory.");
-        var next = new DirectorReplayStore(capi, capi.World.SavegameIdentifier, directory);
+        var next = new DirectorReplayStore(capi, capi.World.SavegameIdentifier, directory, config.ReplayListOtherWorlds);
         RetireStore(store); store = next;
+        currentWorld = null;
+        EnsureCurrentWorld(forceWrite: false, out _);
     }
 
     public bool StartRecording(string requestedName, out string error)
@@ -1812,6 +1827,7 @@ internal sealed class DirectorReplayManager : IDisposable
                 ? DirectorReplayDocument.CurrentParticleCaptureVersion
                 : 0
         };
+        StampRecordingWorld(document);
         if (config.ReplayCaptureWorld)
         {
             try
@@ -1820,7 +1836,9 @@ internal sealed class DirectorReplayManager : IDisposable
                     capi,
                     game,
                     config.ReplaySnapshotRadiusChunks,
-                    controller.CurrentPose);
+                    controller.CurrentPose,
+                    config.ReplayRangeBelowBlocks,
+                    config.ReplayRangeAboveBlocks);
                 document.IncludesWorldSnapshot = document.WorldSnapshot.Chunks.Count > 0;
                 document.CaptureScope = document.IncludesWorldSnapshot
                     ? DirectorReplayDocument.ClientWorldCaptureScope
@@ -5439,6 +5457,113 @@ internal sealed class DirectorReplayManager : IDisposable
         }
     }
 
+    /// <summary>
+    /// Records a sound from the raw PlaySoundAt arguments. Used for sounds that
+    /// the follow camera silences before they ever start a LoadedSoundNative,
+    /// so they would otherwise never reach <see cref="CaptureSound"/>.
+    /// </summary>
+    internal void CaptureSoundAt(
+        AssetLocation? location,
+        double x,
+        double y,
+        double z,
+        float volume,
+        float pitch,
+        float range,
+        EnumSoundType soundType)
+    {
+        if (location is null)
+        {
+            return;
+        }
+        SoundParams parameters = new()
+        {
+            Location = location,
+            Position = new Vec3f((float)x, (float)y, (float)z),
+            RelativePosition = x == 0d && y == 0d && z == 0d,
+            Volume = volume,
+            Pitch = pitch,
+            Range = range,
+            SoundType = soundType
+        };
+        CaptureSound(parameters, marker: null, DirectorReplaySoundAction.Play,
+            playbackPosition: 0f, soundLengthSeconds: 0f);
+    }
+
+    /// <summary>
+    /// Records the hurt sound for a damaged entity. The generic sound hooks
+    /// only see sounds that actually start on the observing client, which is
+    /// not guaranteed for damage dealt away from the camera.
+    /// </summary>
+    internal void CaptureHurtSound(Entity entity, float damage)
+    {
+        if (entity is null || recording is null || applyingReplayState || !CaptureSounds
+            || entity.World.Side != EnumAppSide.Client)
+        {
+            return;
+        }
+
+        AssetLocation? location = ResolveHurtSound(entity);
+        if (location is null)
+        {
+            return;
+        }
+        double x = entity.Pos.X;
+        double y = entity.Pos.Y;
+        double z = entity.Pos.Z;
+        if (!DirectorReplayPlaybackPolicy.IsValidSoundPosition(x, y, z))
+        {
+            return;
+        }
+
+        lock (soundCaptureSync)
+        {
+            // A hurt sound can also reach the generic LoadedSound hook; avoid
+            // storing the same sound twice from the same moment.
+            if (recording.SoundEvents.LastOrDefault() is { } previous
+                && string.Equals(previous.Location, location.ToString(), StringComparison.Ordinal)
+                && Math.Abs(previous.TimeSeconds - recordingElapsedSeconds) < 0.12d)
+            {
+                return;
+            }
+            recording.SoundEvents.Add(new DirectorReplaySoundEvent
+            {
+                TimeSeconds = recordingElapsedSeconds,
+                Location = location.ToString(),
+                InstanceId = 0L,
+                Action = DirectorReplaySoundAction.Play,
+                X = x,
+                Y = y,
+                Z = z,
+                RelativePosition = false,
+                ShouldLoop = false,
+                PlaybackPosition = 0f,
+                SoundLengthSeconds = 0f,
+                Volume = Math.Clamp(0.6f + damage / 25f, 0.4f, 1f),
+                Pitch = 1f + (float)(entity.World.Rand.NextDouble() - 0.5d) * 0.12f,
+                Range = 16f,
+                ReferenceDistance = 2f,
+                SoundType = 0
+            });
+        }
+    }
+
+    private AssetLocation? ResolveHurtSound(Entity entity)
+    {
+        if (entity is EntityPlayer)
+        {
+            int index = 1 + Math.Abs(entity.EntityId.GetHashCode()) % 4;
+            return new AssetLocation($"game:sounds/player/hurt{index}.ogg");
+        }
+        if (entity.Properties?.ResolvedSounds is { } resolved
+            && resolved.TryGetValue("hurt", out AssetLocation[]? sounds)
+            && sounds is { Length: > 0 })
+        {
+            return sounds[entity.World.Rand.Next(sounds.Length)];
+        }
+        return null;
+    }
+
     private void CaptureSound(
         SoundParams? parameters,
         ReplayLoadedSoundMarker? marker,
@@ -5468,6 +5593,21 @@ internal sealed class DirectorReplayManager : IDisposable
                 || !CaptureSounds
                 || !DirectorReplayPlaybackPolicy.IsValidSoundPosition(x, y, z)
                 || !CanCaptureEvent(active))
+            {
+                return;
+            }
+
+            // The same sound can reach both the entity-damage hook and the
+            // generic sound hook. Drop the second copy when it is the same
+            // asset at the same place in the same instant.
+            if (action == DirectorReplaySoundAction.Play
+                && active.SoundEvents.LastOrDefault() is { } lastSound
+                && lastSound.Action == DirectorReplaySoundAction.Play
+                && string.Equals(lastSound.Location, location.ToString(), StringComparison.Ordinal)
+                && Math.Abs(lastSound.TimeSeconds - recordingElapsedSeconds) < 0.12d
+                && Math.Abs(lastSound.X - x) < 0.5d
+                && Math.Abs(lastSound.Y - y) < 0.5d
+                && Math.Abs(lastSound.Z - z) < 0.5d)
             {
                 return;
             }
@@ -6911,7 +7051,9 @@ internal sealed class DirectorReplayManager : IDisposable
             }
         }
 
-        Entity? entity = actor.EntityId > 0 ? capi.World.GetEntityById(actor.EntityId) : null;
+        Entity? entity = actor.EntityId > 0 && !actor.RecordedElsewhere
+            ? capi.World.GetEntityById(actor.EntityId)
+            : null;
         if (entity is null || string.IsNullOrWhiteSpace(actor.EntityCode))
         {
             return entity;
@@ -7117,6 +7259,8 @@ internal sealed class DirectorReplayManager : IDisposable
             MotionY = entity.Pos.Motion.Y,
             MotionZ = entity.Pos.Motion.Z,
             HasRenderState = true,
+            HasRenderColor = true,
+            RenderColor = entity.RenderColor,
             OnGround = entity.OnGround,
             FeetInLiquid = entity.FeetInLiquid,
             Swimming = entity.Swimming,
@@ -7498,6 +7642,8 @@ internal sealed class DirectorReplayManager : IDisposable
         }
         active.TimeSeconds = freeze.ReplayTimeSeconds;
         active.PreparedTimeSeconds = active.TimeSeconds;
+        active.PreparedCameraTimeSeconds = freeze.CameraTimeSeconds ?? active.TimeSeconds;
+        active.PreparedRewindAmount = freeze.RewindAmount;
         replayAllowsOffscreenActorRendering = false;
         long animationFrame = ++replayAnimationFrame;
         double previousTime = active.AppliedTimeSeconds;
@@ -9703,6 +9849,9 @@ internal sealed class DirectorReplayManager : IDisposable
         entity.Pos.HeadYaw = ReplayHeadYaw(entity, sample);
         entity.Pos.HeadPitch = ReplayHeadPitch(entity, sample);
         entity.Pos.Motion.Set(sample.MotionX, sample.MotionY, sample.MotionZ);
+        // The hurt flash is client-tick state that ghosts never recompute, so
+        // drive the rendered tint from the recorded sample. White = no tint.
+        entity.RenderColor = sample.HasRenderColor ? sample.RenderColor : unchecked((int)0xFFFFFFFF);
         if (!sample.HasRenderState)
         {
             return;
@@ -10787,8 +10936,9 @@ internal sealed class DirectorReplayManager : IDisposable
         try
         {
             DirectorReplayDocument document = task.GetAwaiter().GetResult();
+            TrimWorldSnapshotToRange(document);
             if (document.WorldId != capi.World.SavegameIdentifier)
-                throw new InvalidDataException("Open the world in which this replay was recorded.");
+                PrepareOtherWorldReplay(document, loading.Info.Path);
             if (document.ServerReplay is { RequiredForCompletePlayback: true, Available: false })
                 throw new InvalidDataException("This coordinated replay requires its server companion data. Copy the matching server replay directory beside the client volume and try again.");
             document.Name = loading.Info.Name;
@@ -11295,6 +11445,10 @@ internal sealed class DirectorReplayManager : IDisposable
         public double AppliedTimeSeconds { get; set; } = -1d;
 
         public double PreparedTimeSeconds { get; set; } = -1d;
+
+        public double PreparedCameraTimeSeconds { get; set; } = -1d;
+
+        public double PreparedRewindAmount { get; set; }
 
         public double Speed { get; set; } = 1d;
 

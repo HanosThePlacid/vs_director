@@ -25,6 +25,7 @@ internal static class SmokeTests
         ("observation cardinal views, orbit, zoom, large coordinates and image orientation", RunSync(CameraObservationChecks.Run)),
         ("timeline row geometry and indexed voice waveforms preserve clipping, amplitude and cancellation", RunSync(TimelineMediaChecks.Run)),
         ("paged playback opens metadata only, seeks both ways and evicts payloads", RunSync(ReplayPagingChecks.Run)),
+        ("replays from another world are translated to this world's blocks and items", RunSync(ReplayRetargetChecks.Run)),
         ("continuous voice preserves packets at low FPS and handles pause, seek and silence", RunSync(ReplayVoiceStreamChecks.Run)),
         ("server indexes seek checkpoints and resolve cross-segment shared chunks losslessly", RunSync(ServerIndexChecks.Run)),
         ("legacy coordinated replay metadata remains readable", RunSync(ServerRecordingChecks.Run)),
@@ -84,12 +85,14 @@ internal static class SmokeTests
         ("replay particles deduplicate and bound playback backlog", RunSync(ReplayParticleDeduplicationAndBacklogPolicyWork)),
         ("replay sounds preserve spatial semantics and complete due-event windows", RunSync(ReplaySoundPlaybackPolicyWorks)),
         ("replay interpolation and angle wrapping", RunSync(ReplayInterpolationAndAngleWrappingWork)),
+        ("replay actor render color survives sampling", RunSync(ReplayActorRenderColorSurvivesSampling)),
         ("replay third-person poses migrate independently", RunSync(ReplayThirdPersonPoseMigrationWorks)),
         ("replay animation gaps crossfade without stopping", RunSync(ReplayAnimationGapsCrossfadeWithoutStopping)),
         ("replay markers and speed keys persist in lightweight sidecars", RunSync(ReplayTimelineEditsPersistAndSample)),
         ("replay viewport clips normalize clone and persist", RunSync(ReplayViewportClipsNormalizeCloneAndPersist)),
         ("replay visual settings normalize clone migrate and persist", RunSync(ReplayVisualSettingsWork)),
         ("replay curves preserve shape, local control, clock bounds and camera capture", RunSync(ReplayElementCurveChecks.Run)),
+        ("replay presets: element end, time effects, follow blend, look-at, usage store", RunSync(ReplayPresetEngineChecks.Run)),
         ("Replay elements normalize sample and persist", RunSync(ReplayElementsNormalizeSampleAndPersist)),
         ("replay entity follow intervals sample and normalize", RunSync(ReplayEntityFollowIntervalsWork)),
         ("replay camera orbit and entity tracking math", RunSync(ReplayCameraElementMathWorks)),
@@ -3853,6 +3856,57 @@ internal static class SmokeTests
         Check.False(current.SoundEvents[0].RelativePosition);
     }
 
+    private static void ReplayActorRenderColorSurvivesSampling()
+    {
+        // Hurt flashes are stored as a per-frame RenderColor tint. They must
+        // survive boundary copies, interpolated samples and stepped samples,
+        // otherwise playback resets the entity tint to white every frame.
+        const int normalColor = unchecked((int)0xFFFFFFFF);
+        const int hurtColor = unchecked((int)0xFFFF6464);
+        DirectorReplayActorTrack actor = new()
+        {
+            ActorKey = "entity:test",
+            Samples = new List<DirectorReplayActorSample>
+            {
+                new() { TimeSeconds = 0d, HasRenderColor = true, RenderColor = normalColor },
+                new() { TimeSeconds = 1d, HasRenderColor = true, RenderColor = hurtColor },
+                new() { TimeSeconds = 2d, HasRenderColor = true, RenderColor = normalColor }
+            }
+        };
+        DirectorReplayActorSample sampled = new() { HasRenderColor = false, RenderColor = 123 };
+
+        Check.True(DirectorReplayMath.TrySample(actor, 0d, sampled));
+        Check.True(sampled.HasRenderColor);
+        Check.Equal(normalColor, sampled.RenderColor);
+
+        Check.True(DirectorReplayMath.TrySample(actor, 0.9d, sampled));
+        Check.Equal(hurtColor, sampled.RenderColor);
+
+        Check.True(DirectorReplayMath.TrySample(actor, 1.6d, sampled));
+        Check.Equal(normalColor, sampled.RenderColor);
+
+        Check.True(DirectorReplayMath.TrySample(actor, 2d, sampled));
+        Check.Equal(normalColor, sampled.RenderColor);
+
+        Check.True(DirectorReplayMath.TrySample(actor, 1d, sampled, interpolate: false));
+        Check.Equal(hurtColor, sampled.RenderColor);
+
+        // Saving normalizes every sample. That must not strip the recorded tint,
+        // otherwise the flash is gone before playback ever sees the replay.
+        DirectorReplayDocument saved = DirectorReplayMath.Normalize(new DirectorReplayDocument
+        {
+            Actors = new List<DirectorReplayActorTrack> { actor }
+        });
+        Check.True(saved.Actors[0].Samples[1].HasRenderColor);
+        Check.Equal(hurtColor, saved.Actors[0].Samples[1].RenderColor);
+
+        // Recordings without a tint must clear an earlier red tint instead of
+        // letting the reusable sample keep flashing forever.
+        actor.Samples[1].HasRenderColor = false;
+        Check.True(DirectorReplayMath.TrySample(actor, 0.9d, sampled));
+        Check.False(sampled.HasRenderColor);
+    }
+
     private static void ReplayInterpolationAndAngleWrappingWork()
     {
         float degreesToRadians = MathF.PI / 180f;
@@ -5498,8 +5552,10 @@ internal static class SmokeTests
         Check.False(custom.Camera.CameraCollision);
         Check.False(custom.Camera.OverrideNearClip);
         Check.True(custom.Audio.PreservePitchWithReplaySpeed);
+        Check.False(custom.Camera.AvoidOcclusion);
+        Check.False(custom.Composition.VerticalGuide);
         Check.Equal(
-            44,
+            46,
             typeof(DirectorReplayWorldVisuals).GetProperties().Length
             + typeof(DirectorReplaySkyVisuals).GetProperties().Length
             + typeof(DirectorReplayEnvironmentVisuals).GetProperties().Length

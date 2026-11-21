@@ -195,7 +195,7 @@ internal static class ReplayRemoteChunkPriorityPatch
             && DirtyChunksField?.GetValue(game) is UniqueQueue<long> normalQueue
             && DirtyChunksLockField?.GetValue(game) is object queueLock)
         {
-            lock (queueLock)
+            using (DirectorGameLock.Enter(queueLock))
             {
                 RemoveQueuedChunkIfPresent(normalQueue, chunkIndex);
             }

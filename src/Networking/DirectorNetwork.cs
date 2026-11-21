@@ -24,6 +24,20 @@ public static class DirectorNetwork
             .RegisterMessageType<DirectorPerformanceRequest>()
             .RegisterMessageType<DirectorPerformanceStatus>();
     }
+
+    /// <summary>
+    /// Client-only mode: a server without VS Director never connects this channel,
+    /// and sending on an unconnected channel throws. Server features then stay off.
+    /// </summary>
+    internal static bool TrySendPacket<T>(this Vintagestory.API.Client.IClientNetworkChannel channel, T message)
+    {
+        if (!channel.Connected)
+        {
+            return false;
+        }
+        channel.SendPacket(message);
+        return true;
+    }
 }
 
 public enum DirectorPermissionRequestAction

@@ -532,7 +532,7 @@ internal sealed class DirectorOpenAlLoopbackMixer : IDisposable
             return Array.Empty<LoadedSoundNative>();
         }
 
-        lock (gate)
+        using (DirectorGameLock.Enter(gate))
         {
             return loaded.Cast<object>().OfType<LoadedSoundNative>().ToArray();
         }

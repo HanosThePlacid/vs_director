@@ -99,7 +99,7 @@ internal sealed partial class DirectorWorkspaceHud
                 break;
             case DirectorWorkspaceSection.Replay:
                 foreach (var replay in owner.Replays)
-                    Add(replay.Id, replay.Name, Lang.Get("vsdirector:replay-row-detail", replay.DurationSeconds.ToString("0.##", CultureInfo.InvariantCulture),
+                    Add(replay.Id, replay.ListName, Lang.Get("vsdirector:replay-row-detail", replay.DurationSeconds.ToString("0.##", CultureInfo.InvariantCulture),
                         replay.ActorCount, replay.CreatedUtc.ToLocalTime().ToString("yyyy-MM-dd HH:mm", CultureInfo.CurrentCulture)), replay.Description, replay.Tags,
                         () => SelectReplay(replay.Id), () => PlayReplayFromWorkspace(replay.Id));
                 if (HasReplayViewEditor)

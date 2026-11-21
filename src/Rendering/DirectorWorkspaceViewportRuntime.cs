@@ -56,16 +56,68 @@ internal static class DirectorWorkspaceViewportRuntime
                     || dialog.GetType().FullName == "VSImGui.VSImGuiDialog") == true));
     }
 
+    /// <summary>
+    /// The "Hide HUD" setting. It used to act only while a director camera was active, so
+    /// in a workspace without one (for example a replay opened in another world) the toggle
+    /// did nothing. While the workspace is open it now hides the game HUD on its own.
+    /// </summary>
+    internal static Func<bool>? HideHudSetting { get; set; }
+
     internal static bool HideGameHud
         => !DirectorOffscreenRenderRuntime.IsRendering
-            && (interfaceHudHidden || state?.ClientApi.World is ClientMain { ShouldRender2DOverlays: false });
+            && (interfaceHudHidden
+                || state?.ClientApi.World is ClientMain { ShouldRender2DOverlays: false }
+                || state is not null && HideHudSetting?.Invoke() == true);
 
     internal static bool ShouldRenderDialog(GuiDialog dialog)
-        => (!HideGameHud
-            || dialog.DialogType == EnumDialogType.Dialog
-            || dialog.GetType().FullName == "VSImGui.VSImGuiDialog"
-            || dialog.GetType().Assembly == typeof(DirectorWorkspaceViewportRuntime).Assembly)
+        => (!HideGameHud || IsInterfaceDialog(dialog))
             && dialog.ShouldReceiveRenderEvents();
+
+    /// <summary>
+    /// Dialogs that stay visible while the game HUD is hidden: Director's own windows,
+    /// VSImGui, and real (non-HUD) dialogs the player opened. HUD elements from other
+    /// mods (HudClock, StatusHud, ...) are hidden. Director's own types are matched by
+    /// namespace, not assembly: inside MergedModPack every merged mod shares one assembly.
+    /// </summary>
+    private static bool IsInterfaceDialog(GuiDialog dialog)
+    {
+        Type type = dialog.GetType();
+        return IsDirectorType(type)
+            || type.FullName == "VSImGui.VSImGuiDialog"
+            || dialog.DialogType == EnumDialogType.Dialog && dialog is not HudElement;
+    }
+
+    internal static bool IsDirectorType(Type type)
+        => type.Namespace is { } ns
+            && (ns == "VSDirector" || ns.StartsWith("VSDirector.", StringComparison.Ordinal));
+
+    private static readonly Dictionary<Type, bool> orthoRendererVisibility = new();
+
+    private static readonly HashSet<string> gameAssemblies = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "VintagestoryLib", "VintagestoryAPI", "Vintagestory", "VSEssentials", "VSSurvivalMod", "VSCreativeMod"
+    };
+
+    /// <summary>
+    /// Ortho-stage renderers that keep drawing while the HUD is hidden. Mods often draw
+    /// HUD overlays (clocks, radars, health bars, reach indicators) straight from an
+    /// IRenderer instead of a dialog, so those are filtered here as well.
+    /// </summary>
+    internal static bool ShouldRenderOrthoRenderer(IRenderer renderer)
+    {
+        Type type = renderer.GetType();
+        if (orthoRendererVisibility.TryGetValue(type, out bool visible))
+        {
+            return visible;
+        }
+        string assembly = type.Assembly.GetName().Name ?? string.Empty;
+        visible = IsDirectorType(type)
+            || gameAssemblies.Contains(assembly)
+            || assembly.StartsWith("VSImGui", StringComparison.OrdinalIgnoreCase)
+            || assembly.StartsWith("ImGui", StringComparison.OrdinalIgnoreCase);
+        orthoRendererVisibility[type] = visible;
+        return visible;
+    }
 
     internal static void Configure(
         object owner,

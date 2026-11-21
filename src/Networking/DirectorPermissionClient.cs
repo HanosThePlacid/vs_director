@@ -26,18 +26,33 @@ internal sealed class DirectorPermissionClient
     public IReadOnlyList<DirectorPermissionMemberDto> Members { get; private set; }
         = Array.Empty<DirectorPermissionMemberDto>();
 
+    /// <summary>True when the server runs VS Director and answers on its channel.</summary>
+    public bool ServerAvailable => channel.Connected;
+
     public bool Has(DirectorPermission permission)
-        => permission != DirectorPermission.None && DirectorPermissions.Sanitize((long)permission) == permission
-            && (IsAdmin || (Permissions & permission) == permission);
+    {
+        if (permission == DirectorPermission.None
+            || DirectorPermissions.Sanitize((long)permission) != permission)
+        {
+            return false;
+        }
+        if (!ServerAvailable)
+        {
+            // Client-only mode: everything that runs on this client is allowed;
+            // features that need the server-side mod stay unavailable.
+            return (DirectorPermissions.ClientOnlyPermissions & permission) == permission;
+        }
+        return IsAdmin || (Permissions & permission) == permission;
+    }
 
     public void RequestSnapshot()
-        => channel.SendPacket(new DirectorPermissionRequest
+        => channel.TrySendPacket(new DirectorPermissionRequest
         {
             Action = (int)DirectorPermissionRequestAction.Refresh
         });
 
     public void Update(string playerUid, DirectorPermission permissions)
-        => channel.SendPacket(new DirectorPermissionRequest
+        => channel.TrySendPacket(new DirectorPermissionRequest
         {
             Action = (int)DirectorPermissionRequestAction.Update,
             PlayerUid = playerUid,
