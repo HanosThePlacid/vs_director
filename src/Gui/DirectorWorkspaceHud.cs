@@ -86,7 +86,8 @@ internal sealed partial class DirectorWorkspaceHud : GuiDialog
         "followOrbitAngle", "followOrbitSpeed", "followSmooth", "followDelay", "followFov",
         "frequencyX", "amplitudeX", "frequencyY", "amplitudeY", "timelapseTick",
         "timelapseDuration", "timeOfDay", "speed", "freezeDelay", "blockX", "blockY", "blockZ",
-        "volume", "audioPitch"
+        "volume", "audioPitch", "targetBlend", "frameSize", "trackSmooth", "effectSeconds", "effectRate",
+        "gradeSepia", "gradeContrast", "gradeVignette", "gradeBloom", "gradeGlitch", "gradeFade", "titleDuration"
     };
     private const double PreviewBorderThickness = 0d;
     private const double MinimumPreviewContentWidth = 320d;
@@ -249,6 +250,7 @@ internal sealed partial class DirectorWorkspaceHud : GuiDialog
     private string replayViewportYawText = "0";
     private string replayViewportPitchText = "0";
     private string replayViewportRollText = "0";
+    private bool replayViewportEndsShot;
     private string replayViewportInterpolationCode = "ease";
     private string replayElementTypeCode = "element-camera";
     private ReplayFloatingEditorKind replayFloatingEditorKind;
@@ -2802,6 +2804,8 @@ internal sealed partial class DirectorWorkspaceHud : GuiDialog
             DirectorReplayElementTrackType.Freeze => 2,
             DirectorReplayElementTrackType.BlockOverride => 5,
             DirectorReplayElementTrackType.VoiceAudio => 1,
+            DirectorReplayElementTrackType.ColorGrade => 5,
+            DirectorReplayElementTrackType.Title => 4,
             _ => 0
         });
     }
@@ -14633,6 +14637,55 @@ internal sealed partial class DirectorWorkspaceHud : GuiDialog
             ? keyframe.Volume * 100f
             : keyframe.Volume);
         Number("audioPitch", keyframe.AudioPitch);
+        replayElementFieldValues["trackMode"] = keyframe.TrackMode switch
+        {
+            DirectorReplayTrackMode.Tripod => "tripod",
+            DirectorReplayTrackMode.OverShoulder => "shoulder",
+            _ => "attached"
+        };
+        replayElementFieldValues["secondaryActorKey"] = keyframe.SecondaryEntityActorKey;
+        replayElementFieldValues["secondaryEntityId"] = keyframe.SecondaryEntityId.ToString(CultureInfo.InvariantCulture);
+        Number("targetBlend", keyframe.TargetBlend);
+        replayElementFieldValues["frameGroup"] = keyframe.TrackFrameGroup ? "true" : "false";
+        replayElementFieldValues["autoFrame"] = keyframe.TrackAutoFrame ? "true" : "false";
+        Number("frameSize", keyframe.TrackFrameSize);
+        Number("trackSmooth", keyframe.TrackSmoothTimeSeconds);
+        replayElementFieldValues["followWorld"] = keyframe.FollowWorldAligned ? "true" : "false";
+        replayElementFieldValues["followBlend"] = keyframe.FollowBlend switch
+        {
+            DirectorReplayElementInterpolation.Linear => "linear",
+            DirectorReplayElementInterpolation.EaseIn => "ease-in",
+            DirectorReplayElementInterpolation.EaseOut => "ease-out",
+            DirectorReplayElementInterpolation.EaseInOut or DirectorReplayElementInterpolation.Smooth
+                or DirectorReplayElementInterpolation.Hermite => "ease-in-out",
+            _ => "hold"
+        };
+        replayElementFieldValues["timeEffect"] = keyframe.TimeEffect switch
+        {
+            DirectorReplayTimeEffect.Rewind => "rewind",
+            DirectorReplayTimeEffect.Stutter => "stutter",
+            DirectorReplayTimeEffect.Slow => "slow",
+            _ => "freeze"
+        };
+        Number("effectSeconds", keyframe.TimeEffectSeconds);
+        Number("effectRate", keyframe.TimeEffectRate);
+        replayElementFieldValues["cameraContinues"] = keyframe.FreezeCameraContinues ? "true" : "false";
+        Number("gradeSepia", keyframe.GradeSepia);
+        Number("gradeContrast", keyframe.GradeContrast);
+        Number("gradeVignette", keyframe.GradeVignette);
+        Number("gradeBloom", keyframe.GradeBloom);
+        Number("gradeGlitch", keyframe.GradeGlitch);
+        Number("gradeFade", keyframe.GradeFade);
+        replayElementFieldValues["endsElement"] = keyframe.EndsElement ? "true" : "false";
+        replayElementFieldValues["titleText"] = keyframe.Text;
+        replayElementFieldValues["titleSubText"] = keyframe.SubText;
+        Number("titleDuration", keyframe.TitleDurationSeconds);
+        replayElementFieldValues["titlePosition"] = keyframe.TitlePosition switch
+        {
+            DirectorReplayTitlePosition.Center => "center",
+            DirectorReplayTitlePosition.Top => "top",
+            _ => "lower"
+        };
     }
 
     private string ReplayElementField(string field, string fallback = "")
@@ -14672,6 +14725,7 @@ internal sealed partial class DirectorWorkspaceHud : GuiDialog
             "hermite" => DirectorReplayElementInterpolation.Hermite,
             _ => DirectorReplayElementInterpolation.Linear
         };
+        keyframe.EndsElement = ReplayElementField("endsElement") == "true";
         bool valid = keyframe.TrackType switch
         {
             DirectorReplayElementTrackType.CameraOrbit => TryApplyReplayOrbitFields(keyframe),
@@ -14687,6 +14741,8 @@ internal sealed partial class DirectorWorkspaceHud : GuiDialog
             DirectorReplayElementTrackType.Freeze => TryApplyReplayFreezeFields(keyframe),
             DirectorReplayElementTrackType.BlockOverride => TryApplyReplayBlockFields(keyframe),
             DirectorReplayElementTrackType.VoiceAudio => TryApplyReplayVoiceAudioFields(keyframe),
+            DirectorReplayElementTrackType.ColorGrade => TryApplyReplayGradeFields(keyframe),
+            DirectorReplayElementTrackType.Title => TryApplyReplayTitleFields(keyframe),
             _ => false
         };
         if (!valid)
@@ -14724,7 +14780,7 @@ internal sealed partial class DirectorWorkspaceHud : GuiDialog
         keyframe.Distance = distance;
         keyframe.Yaw = yaw;
         keyframe.Pitch = pitch;
-        keyframe.Roll = 0f;
+        keyframe.Roll = TryReplayElementFloat("roll", out float orbitRoll) ? orbitRoll : 0f;
         return true;
     }
 
@@ -14763,6 +14819,66 @@ internal sealed partial class DirectorWorkspaceHud : GuiDialog
         keyframe.Roll = roll;
         keyframe.OpenClearView = string.Equals(
             ReplayElementField("clearView"), "true", StringComparison.OrdinalIgnoreCase);
+        keyframe.TrackMode = ReplayElementField("trackMode", "attached") switch
+        {
+            "tripod" => DirectorReplayTrackMode.Tripod,
+            "shoulder" => DirectorReplayTrackMode.OverShoulder,
+            _ => DirectorReplayTrackMode.Attached
+        };
+        if (keyframe.TrackMode == DirectorReplayTrackMode.Tripod
+            && TryReplayElementDouble("x", out double tripodX)
+            && TryReplayElementDouble("y", out double tripodY)
+            && TryReplayElementDouble("z", out double tripodZ))
+        {
+            (keyframe.X, keyframe.Y, keyframe.Z) = (tripodX, tripodY, tripodZ);
+        }
+        keyframe.SecondaryEntityActorKey = ReplayElementField("secondaryActorKey").Trim();
+        keyframe.SecondaryEntityId = long.TryParse(ReplayElementField("secondaryEntityId"), NumberStyles.Integer,
+            CultureInfo.InvariantCulture, out long secondaryId) ? secondaryId : 0L;
+        if (TryReplayElementDouble("targetBlend", out double blend)) keyframe.TargetBlend = Math.Clamp(blend, 0d, 1d);
+        keyframe.TrackFrameGroup = ReplayElementField("frameGroup") == "true";
+        keyframe.TrackAutoFrame = ReplayElementField("autoFrame") == "true";
+        if (TryReplayElementDouble("frameSize", out double frameSize)) keyframe.TrackFrameSize = Math.Clamp(frameSize, 0.05d, 1d);
+        if (TryReplayElementDouble("trackSmooth", out double smooth)) keyframe.TrackSmoothTimeSeconds = Math.Clamp(smooth, 0d, 10d);
+        return true;
+    }
+
+    private bool TryApplyReplayGradeFields(DirectorReplayElementKeyframe keyframe)
+    {
+        if (!TryReplayElementFloat("gradeSepia", out float sepia)
+            || !TryReplayElementFloat("gradeContrast", out float contrast)
+            || !TryReplayElementFloat("gradeVignette", out float vignette)
+            || !TryReplayElementFloat("gradeBloom", out float bloom)
+            || !TryReplayElementFloat("gradeGlitch", out float glitch)
+            || !TryReplayElementFloat("gradeFade", out float fade))
+        {
+            return false;
+        }
+        keyframe.GradeSepia = Math.Clamp(sepia, 0f, 1f);
+        keyframe.GradeContrast = Math.Clamp(contrast, -1f, 1f);
+        keyframe.GradeVignette = Math.Clamp(vignette, 0f, 1f);
+        keyframe.GradeBloom = Math.Clamp(bloom, 0f, 2f);
+        keyframe.GradeGlitch = Math.Clamp(glitch, 0f, 1f);
+        keyframe.GradeFade = Math.Clamp(fade, 0f, 1f);
+        return true;
+    }
+
+    private bool TryApplyReplayTitleFields(DirectorReplayElementKeyframe keyframe)
+    {
+        if (!TryReplayElementDouble("titleDuration", out double duration) || duration is < 0.2d or > 600d)
+        {
+            return false;
+        }
+        keyframe.Text = ReplayElementField("titleText");
+        keyframe.SubText = ReplayElementField("titleSubText");
+        keyframe.TitleDurationSeconds = duration;
+        keyframe.TitlePosition = ReplayElementField("titlePosition", "lower") switch
+        {
+            "center" => DirectorReplayTitlePosition.Center,
+            "top" => DirectorReplayTitlePosition.Top,
+            _ => DirectorReplayTitlePosition.LowerThird
+        };
+        keyframe.InterpolationToNext = DirectorReplayElementInterpolation.Hold;
         return true;
     }
 
@@ -14772,10 +14888,7 @@ internal sealed partial class DirectorWorkspaceHud : GuiDialog
         keyframe.FollowEntityRole = ReplayElementField("followRole", "start") == "end"
             ? DirectorReplayFollowEntityKeyframeRole.End
             : DirectorReplayFollowEntityKeyframeRole.Start;
-        if (keyframe.FollowEntityRole == DirectorReplayFollowEntityKeyframeRole.End)
-        {
-            return true;
-        }
+        bool endKeyframe = keyframe.FollowEntityRole == DirectorReplayFollowEntityKeyframeRole.End;
 
         if (!long.TryParse(ReplayElementField("entityId"), NumberStyles.Integer,
                 CultureInfo.InvariantCulture, out long entityId)
@@ -14800,7 +14913,8 @@ internal sealed partial class DirectorWorkspaceHud : GuiDialog
             || delay < 0d || delay > CameraFollowMath.MaxDelaySeconds
             || fov < 10f || fov > 170f)
         {
-            return false;
+            // End keyframes only matter for animated follows; keep them valid as they are.
+            return endKeyframe;
         }
 
         keyframe.EntityId = entityId;
@@ -14828,6 +14942,16 @@ internal sealed partial class DirectorWorkspaceHud : GuiDialog
         keyframe.FollowSmoothTimeSeconds = smooth;
         keyframe.FollowDelaySeconds = delay;
         keyframe.FollowFov = fov;
+        keyframe.Roll = TryReplayElementFloat("roll", out float followRoll) ? followRoll : keyframe.Roll;
+        keyframe.FollowWorldAligned = ReplayElementField("followWorld") == "true";
+        keyframe.FollowBlend = ReplayElementField("followBlend", "hold") switch
+        {
+            "linear" => DirectorReplayElementInterpolation.Linear,
+            "ease-in" => DirectorReplayElementInterpolation.EaseIn,
+            "ease-out" => DirectorReplayElementInterpolation.EaseOut,
+            "ease-in-out" => DirectorReplayElementInterpolation.EaseInOut,
+            _ => DirectorReplayElementInterpolation.Hold
+        };
         return true;
     }
 
@@ -14849,6 +14973,7 @@ internal sealed partial class DirectorWorkspaceHud : GuiDialog
         keyframe.FrequencyY = frequencyY;
         keyframe.AmplitudeY = amplitudeY;
         keyframe.SplitParameters = ReplayElementField("split") == "true";
+        keyframe.Roll = TryReplayElementFloat("roll", out float shakeRoll) ? Math.Clamp(shakeRoll, -45f, 45f) : keyframe.Roll;
         if (!keyframe.SplitParameters)
         {
             keyframe.FrequencyY = keyframe.FrequencyX;
@@ -14943,6 +15068,16 @@ internal sealed partial class DirectorWorkspaceHud : GuiDialog
         }
         keyframe.Frozen = ReplayElementField("frozen") == "true";
         keyframe.FreezeDelayTicks = delay;
+        keyframe.TimeEffect = ReplayElementField("timeEffect", "freeze") switch
+        {
+            "rewind" => DirectorReplayTimeEffect.Rewind,
+            "stutter" => DirectorReplayTimeEffect.Stutter,
+            "slow" => DirectorReplayTimeEffect.Slow,
+            _ => DirectorReplayTimeEffect.Freeze
+        };
+        if (TryReplayElementDouble("effectSeconds", out double effectSeconds)) keyframe.TimeEffectSeconds = Math.Clamp(effectSeconds, 0.1d, 60d);
+        if (TryReplayElementDouble("effectRate", out double effectRate)) keyframe.TimeEffectRate = Math.Clamp(effectRate, 0.05d, 60d);
+        keyframe.FreezeCameraContinues = ReplayElementField("cameraContinues") == "true";
         keyframe.InterpolationToNext = DirectorReplayElementInterpolation.Hold;
         return true;
     }
@@ -15037,6 +15172,7 @@ internal sealed partial class DirectorWorkspaceHud : GuiDialog
 
         replayViewportFieldsId = clip.Id;
         replayViewportNameText = clip.Name;
+        replayViewportEndsShot = clip.EndsShot;
         replayViewportStartText = clip.TimelineStartSeconds.ToString("0.###", CultureInfo.InvariantCulture);
         CameraPreset? pose = ReplayCameraElementPose(clip);
         (double displayX, double displayY, double displayZ) = pose is null
@@ -15153,7 +15289,11 @@ internal sealed partial class DirectorWorkspaceHud : GuiDialog
             new ReplayViewportSourceOption("element-time-of-day",
                 Lang.Get("vsdirector:replay-element-time-of-day")),
             new ReplayViewportSourceOption("element-freeze",
-                Lang.Get("vsdirector:replay-element-freeze"))
+                Lang.Get("vsdirector:replay-element-freeze")),
+            new ReplayViewportSourceOption("element-color-grade",
+                Lang.Get("vsdirector:replay-element-color-grade")),
+            new ReplayViewportSourceOption("element-title",
+                Lang.Get("vsdirector:replay-element-title"))
         };
 
     private IReadOnlyList<DirectorReplayElementTrack> ActiveReplayTimelineElementTracks()
@@ -15177,6 +15317,8 @@ internal sealed partial class DirectorWorkspaceHud : GuiDialog
             ReplayTimelineElementKind.Freeze => "vsdirector:replay-element-freeze",
             ReplayTimelineElementKind.BlockOverride => "vsdirector:replay-element-block-override",
             ReplayTimelineElementKind.VoiceAudio => "vsdirector:replay-element-voice-audio",
+            ReplayTimelineElementKind.ColorGrade => "vsdirector:replay-element-color-grade",
+            ReplayTimelineElementKind.Title => "vsdirector:replay-element-title",
             _ => "vsdirector:replay-element-add"
         });
 
@@ -15197,6 +15339,8 @@ internal sealed partial class DirectorWorkspaceHud : GuiDialog
             DirectorReplayElementTrackType.Freeze => ReplayTimelineElementKind.Freeze,
             DirectorReplayElementTrackType.BlockOverride => ReplayTimelineElementKind.BlockOverride,
             DirectorReplayElementTrackType.VoiceAudio => ReplayTimelineElementKind.VoiceAudio,
+            DirectorReplayElementTrackType.ColorGrade => ReplayTimelineElementKind.ColorGrade,
+            DirectorReplayElementTrackType.Title => ReplayTimelineElementKind.Title,
             _ => ReplayTimelineElementKind.Camera
         };
 
@@ -15217,6 +15361,8 @@ internal sealed partial class DirectorWorkspaceHud : GuiDialog
             ReplayTimelineElementKind.Freeze => DirectorReplayElementTrackType.Freeze,
             ReplayTimelineElementKind.BlockOverride => DirectorReplayElementTrackType.BlockOverride,
             ReplayTimelineElementKind.VoiceAudio => DirectorReplayElementTrackType.VoiceAudio,
+            ReplayTimelineElementKind.ColorGrade => DirectorReplayElementTrackType.ColorGrade,
+            ReplayTimelineElementKind.Title => DirectorReplayElementTrackType.Title,
             _ => DirectorReplayElementTrackType.Camera
         };
 
@@ -15578,6 +15724,8 @@ internal sealed partial class DirectorWorkspaceHud : GuiDialog
             "element-timelapse" => DirectorReplayElementTrackType.Timelapse,
             "element-time-of-day" => DirectorReplayElementTrackType.TimeOfDay,
             "element-freeze" => DirectorReplayElementTrackType.Freeze,
+            "element-color-grade" => DirectorReplayElementTrackType.ColorGrade,
+            "element-title" => DirectorReplayElementTrackType.Title,
             _ => DirectorReplayElementTrackType.Camera
         };
         DirectorReplayViewportTimeline timeline = owner.ReplayViewportTimeline;
@@ -15883,6 +16031,12 @@ internal sealed partial class DirectorWorkspaceHud : GuiDialog
         {
             keyframe.TimelapseTick = ReplayTimelineTickAt(time);
         }
+        else if (trackType == DirectorReplayElementTrackType.Title)
+        {
+            keyframe.Text = Lang.Get("vsdirector:replay-title-default");
+            keyframe.TitleDurationSeconds = 3d;
+            keyframe.InterpolationToNext = DirectorReplayElementInterpolation.Hold;
+        }
         else if (trackType == DirectorReplayElementTrackType.TimeOfDay)
         {
             double hoursPerDay = Math.Max(1d, capi.World.Calendar.HoursPerDay);
@@ -16089,6 +16243,7 @@ internal sealed partial class DirectorWorkspaceHud : GuiDialog
             "bezier" => CameraPathInterpolation.Bezier,
             _ => CameraPathInterpolation.EaseInOut
         };
+        clip.EndsShot = replayViewportEndsShot;
         if (CommitReplayViewportTimeline(timeline))
         {
             CloseReplayFloatingEditor();
@@ -22100,7 +22255,9 @@ internal sealed partial class DirectorWorkspaceHud : GuiDialog
         TimeOfDay,
         Freeze,
         BlockOverride,
-        VoiceAudio
+        VoiceAudio,
+        ColorGrade,
+        Title
     }
 
     private enum InspectorSectionTarget

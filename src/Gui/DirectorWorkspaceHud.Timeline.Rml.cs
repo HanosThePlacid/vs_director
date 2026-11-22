@@ -399,7 +399,7 @@ internal sealed partial class DirectorWorkspaceHud
         "Camera" or "CameraPath" => "camera", "Marker" => "bookmark", "Speed" => "gauge", "CameraOrbit" => "rotate-360",
         "TrackEntity" or "LookAt" => "focus-2", "FollowEntity" => "walk", "CameraShake" => "camera-rotate", "Fov" => "eye",
         "Timelapse" => "hourglass", "TimeOfDay" => "clock", "Freeze" => "snowflake", "BlockOverride" => "cube",
-        "VoiceAudio" or "Audio" => "volume", "Roll" => "rotate", _ => "menu-2"
+        "VoiceAudio" or "Audio" => "volume", "Roll" => "rotate", "ColorGrade" => "palette", "Title" => "typography", _ => "menu-2"
     };
 
     private static string TimelineKeyIcon(string type, bool frozen = false, bool end = false) => type switch

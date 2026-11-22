@@ -53,6 +53,7 @@ public sealed partial class VSDirectorModSystem : ModSystem
     private DirectorGreenScreenSkyRenderer? greenScreenSkyRenderer;
     private DirectorGreenScreenPreviewRenderer? greenScreenPreviewRenderer;
     private DirectorReplayCompositionOverlay? replayCompositionOverlay;
+    private VSDirector.Gui.DirectorReplayScreenEffectsRenderer? replayScreenEffects;
     private DirectorWorkspaceHud? workspace;
     private DirectorSettingsDialog? settingsDialog;
     private WorldCameraStore? store;
@@ -1417,6 +1418,7 @@ public sealed partial class VSDirectorModSystem : ModSystem
         greenScreenPreviewRenderer = new DirectorGreenScreenPreviewRenderer(api);
         modelOutlineRenderer = new DirectorModelOutlineRenderer(api, config);
         replayCompositionOverlay = new DirectorReplayCompositionOverlay(api);
+        replayScreenEffects = new VSDirector.Gui.DirectorReplayScreenEffectsRenderer(api);
 
         harmony = new Harmony(HarmonyId);
         harmony.PatchAll(Assembly.GetExecutingAssembly());
@@ -1506,6 +1508,8 @@ public sealed partial class VSDirectorModSystem : ModSystem
         greenScreenSkyRenderer = null;
         replayCompositionOverlay?.Dispose();
         replayCompositionOverlay = null;
+        replayScreenEffects?.Dispose();
+        replayScreenEffects = null;
         anchorClient?.Dispose();
         anchorClient = null;
         chunkPreloadClient?.Dispose();
@@ -10679,6 +10683,10 @@ public sealed partial class VSDirectorModSystem : ModSystem
         return false;
     }
 
+    /// <summary>Adds a marker without a chat message (bulk adds from presets).</summary>
+    internal bool TryAddReplayMarkerQuietly(string label, double seconds)
+        => replay?.AddMarker(label, seconds, out _, out _) == true;
+
     internal bool TryDeleteReplayMarker(string selector, out string message)
     {
         DirectorReplayMarker marker = new();
@@ -14208,6 +14216,8 @@ public sealed partial class VSDirectorModSystem : ModSystem
         }
 
         double replayTime = replay.PreparedPlaybackTimeSeconds;
+        // Camera elements may run on the logical clock while a time effect remaps content.
+        double cameraTime = replay.PreparedCameraTimeSeconds;
         DirectorReplayViewportTimeline viewportTimeline = replay.ViewportTimeline;
         DirectorReplayCameraVisuals visualCamera = viewportTimeline.Visuals.Camera;
         controller.SetReplayElementClearView(false);
@@ -14229,15 +14239,15 @@ public sealed partial class VSDirectorModSystem : ModSystem
         DirectorReplayCameraGuideTarget? cameraGuideTarget = null;
         Guid activeCameraId = Guid.Empty;
         HashSet<DirectorReplayElementTrackType> appliedCameraTypes = new();
-        float preservedFov = editingFree ? ReplayCameraGuideFov(viewportTimeline, replayTime)
+        float preservedFov = editingFree ? ReplayCameraGuideFov(viewportTimeline, cameraTime)
             : controller.CurrentPose?.Fov ?? 70f;
-        foreach (DirectorReplayElementTrack track in viewportTimeline.Tracks)
+        // The last enabled camera row that is active at this time drives the view, so a
+        // newly added track or preset takes over while it runs and hands the view back
+        // when it ends. See DirectorReplayCameraPriority.
+        foreach (DirectorReplayElementTrack track in DirectorReplayCameraPriority.InPriorityOrder(viewportTimeline))
         {
-            if (!track.Enabled
-                || appliedCameraTypes.Contains(track.TrackType))
-            {
-                continue;
-            }
+            if (appliedCameraTypes.Count > 0) break;
+            if (!DirectorReplayCameraPriority.IsActive(viewportTimeline, track, cameraTime)) continue;
 
             switch (track.TrackType)
             {
@@ -14247,17 +14257,21 @@ public sealed partial class VSDirectorModSystem : ModSystem
                             track,
                             out CameraPath elementPath,
                             out List<DirectorReplayViewportClip> cameraElements)
-                        || replayTime < cameraElements[0].TimelineStartSeconds
+                        || cameraTime < cameraElements[0].TimelineStartSeconds
                         || !CameraPathSampler.TryEvaluate(
                             elementPath,
-                            replayTime,
+                            cameraTime,
                             out VSDirector.Data.CameraKeyframe evaluated))
                     {
                         continue;
                     }
 
                     DirectorReplayViewportClip active = cameraElements
-                        .Last(item => item.TimelineStartSeconds <= replayTime);
+                        .Last(item => item.TimelineStartSeconds <= cameraTime);
+                    if (active.EndsShot)
+                    {
+                        continue;
+                    }
                     cameraPose = evaluated.ToPreset(Guid.Empty, active.Name);
                     cameraPose.Fov = preservedFov;
                     cameraGuideTarget = null;
@@ -14272,7 +14286,7 @@ public sealed partial class VSDirectorModSystem : ModSystem
                             viewportTimeline.ElementKeyframes,
                             track.TrackType,
                             track.Id,
-                            replayTime,
+                            cameraTime,
                             out DirectorReplayElementKeyframe orbit))
                     {
                         continue;
@@ -14295,7 +14309,7 @@ public sealed partial class VSDirectorModSystem : ModSystem
                             viewportTimeline.ElementKeyframes,
                             track.TrackType,
                             track.Id,
-                            replayTime,
+                            cameraTime,
                             out DirectorReplayElementKeyframe tracking))
                     {
                         continue;
@@ -14304,6 +14318,21 @@ public sealed partial class VSDirectorModSystem : ModSystem
                     // Preserve the camera while its tracked actor is temporarily
                     // unavailable to avoid jumping to another camera track.
                     appliedCameraTypes.Add(track.TrackType);
+                    if (tracking.TrackMode != DirectorReplayTrackMode.Attached)
+                    {
+                        if (!TryEvaluateReplayLookAtTrack(track.Id, tracking, cameraTime,
+                                cameraPose?.Fov ?? preservedFov, out CameraPreset lookPose,
+                                out DirectorReplayCameraGuideTarget lookTarget, out Entity? lookEntity))
+                        {
+                            continue;
+                        }
+                        cameraPose = lookPose;
+                        cameraGuideTarget = lookTarget;
+                        activeCameraId = tracking.Id;
+                        preserveReplayFollowState = false;
+                        clearViewElementTarget = tracking.OpenClearView ? lookEntity : null;
+                        break;
+                    }
                     Entity? target = replay.ResolveReplayActor(
                         tracking.EntityActorKey,
                         null,
@@ -14337,9 +14366,9 @@ public sealed partial class VSDirectorModSystem : ModSystem
                     if (!DirectorReplayElementTimeline.TrySampleFollowEntityInterval(
                             viewportTimeline.ElementKeyframes,
                             track.Id,
-                            replayTime,
+                            cameraTime,
                             out DirectorReplayElementKeyframe followStart,
-                            out _))
+                            out DirectorReplayElementKeyframe followEnd))
                     {
                         continue;
                     }
@@ -14354,11 +14383,13 @@ public sealed partial class VSDirectorModSystem : ModSystem
                         continue;
                     }
 
-                    CameraFollowRig followRig = ReplayFollowEntityRig(followStart, followTarget);
+                    DirectorReplayElementKeyframe followFrame = DirectorReplayFollowBlend.Sample(
+                        followStart, followEnd, cameraTime);
+                    CameraFollowRig followRig = ReplayFollowEntityRig(followFrame, followTarget);
                     if (!controller.TrySetReplayFollowElementPose(
                             followRig,
                             followTarget,
-                            Math.Max(0d, replayTime - followStart.TimeSeconds),
+                            Math.Max(0d, cameraTime - followStart.TimeSeconds),
                             out CameraPreset followedPose,
                             out _, applyToMainCamera: !editingFree))
                     {
@@ -14382,13 +14413,18 @@ public sealed partial class VSDirectorModSystem : ModSystem
         bool hasFov = DirectorReplayElementTimeline.TrySample(
             viewportTimeline,
             DirectorReplayElementTrackType.Fov,
-            replayTime,
+            cameraTime,
             out DirectorReplayElementKeyframe fov);
         bool hasShake = DirectorReplayElementTimeline.TrySample(
             viewportTimeline,
             DirectorReplayElementTrackType.CameraShake,
-            replayTime,
+            cameraTime,
             out _);
+        UpdateReplayScreenEffects(viewportTimeline, cameraTime);
+        if (cameraPose is not null && visualCamera.AvoidOcclusion && cameraGuideTarget is { } occlusionTarget)
+        {
+            cameraPose = AvoidReplayCameraOcclusion(cameraPose, occlusionTarget);
+        }
         replayShootingBasePose = cameraPose?.DeepClone() ?? replayShootingBasePose;
         cameraPose ??= hasShake
             || visualCamera.CameraShake
@@ -14397,7 +14433,7 @@ public sealed partial class VSDirectorModSystem : ModSystem
                 : null;
         if (cameraPose is not null)
         {
-            cameraPose = ApplyReplayShootingCameraVisuals(cameraPose, viewportTimeline, replayTime);
+            cameraPose = ApplyReplayShootingCameraVisuals(cameraPose, viewportTimeline, cameraTime);
             replayShootingPose = cameraPose.DeepClone();
             replayShootingSourceId = activeCameraId;
             if (editingFree)
@@ -14506,7 +14542,9 @@ public sealed partial class VSDirectorModSystem : ModSystem
             OrbitSpeedDegreesPerSecond = keyframe.FollowOrbitSpeedDegreesPerSecond,
             SmoothTimeSeconds = keyframe.FollowSmoothTimeSeconds,
             DelaySeconds = keyframe.FollowDelaySeconds,
-            Fov = keyframe.FollowFov
+            Fov = keyframe.FollowFov,
+            WorldAligned = keyframe.FollowWorldAligned,
+            RollDegrees = keyframe.Roll
         };
 
     private IReadOnlyList<DirectorReplayOrbitGuide> ReplayOrbitElementPreviewGuides()
@@ -14682,6 +14720,7 @@ public sealed partial class VSDirectorModSystem : ModSystem
         replayElementFovWasApplied = false;
         replayElementAppliedBlocks.Clear();
         pathPreview?.SetCurrentReplayCameraGuide(null);
+        ResetReplayScreenEffects();
     }
 
     private void UpdateReplayTimelinePathFollow()
