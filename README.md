@@ -1,5 +1,7 @@
 # VS Director
 
+See the [contributing guide](CONTRIBUTING.md) for pull requests, localization, saved data compatibility, and voice integration.
+
 Game compatibility: the same package supports Vintage Story 1.22.3 and 1.23.0-pre.1, with VSImGui 1.2.7. The 1.23 adaptation covers replay serialization and block entities, camera FOV, offscreen terrain visibility, native text inputs, and workspace picking. Automated checks run the same DLL against both versions; actual multiplayer sessions and the complete in-game recording/export workflow still need manual verification. Later 1.23 builds require revalidation.
 
 VS Director can be installed on the client without installing it on the server. The client still requires VSImGui 1.2.7. Personal cameras, paths, following loaded entities, the creation workspace, replay recording/playback and video export can operate locally. Recordings capture only chunks, entities and events received by the client; moving a camera does not load distant server terrain in this mode.
