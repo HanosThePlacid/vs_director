@@ -116,6 +116,7 @@ internal static class SmokeTests
         ("replay visual settings normalize clone migrate and persist", RunSync(ReplayVisualSettingsWork)),
         ("replay curves preserve shape, local control, clock bounds and camera capture", RunSync(ReplayElementCurveChecks.Run)),
         ("replay presets: element end, time effects, follow blend, look-at, usage store", RunSync(ReplayPresetEngineChecks.Run)),
+        ("camera view angles: free-camera pitch stored in -90..90 form, presets and blending", RunSync(CameraViewAngleChecks.Run)),
         ("Replay elements normalize sample and persist", RunSync(ReplayElementsNormalizeSampleAndPersist)),
         ("replay entity follow intervals sample and normalize", RunSync(ReplayEntityFollowIntervalsWork)),
         ("replay camera orbit and entity tracking math", RunSync(ReplayCameraElementMathWorks)),

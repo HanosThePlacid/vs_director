@@ -128,6 +128,9 @@ internal sealed partial class DirectorWorkspaceHud
                 out CameraPreset captured, out _)
             ? captured
             : new CameraPreset { Fov = CameraFollowMath.DefaultFov };
+        // Presets move along the view's forward/right and clamp pitch to +-89.5, so they
+        // need the -90..90 form (capture already gives it; this guards other sources).
+        CameraViewAngles.Normalize(pose);
         float baseFov = float.IsFinite(pose.Fov) && pose.Fov > 1f ? pose.Fov : CameraFollowMath.DefaultFov;
         double start = ReplayTimelineTickAt(Math.Clamp(owner.ReplayTimeSeconds, 0d, duration))
             / ReplayTimelineTicksPerSecond;
