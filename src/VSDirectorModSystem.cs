@@ -832,6 +832,81 @@ public sealed partial class VSDirectorModSystem : ModSystem
         return true;
     }
 
+    /// <summary>
+    /// Places the free replay camera a few blocks behind and above a replay actor's head,
+    /// looking at it. Used by the replay "Move to player" button.
+    /// </summary>
+    internal bool TryMoveCameraToReplayActor(string actorKey, out string message)
+    {
+        message = string.Empty;
+        if (replay?.IsPlaying != true || controller is null)
+        {
+            message = Lang.Get("vsdirector:replay-not-playing");
+            Show(message);
+            return false;
+        }
+        if (!EnsurePermission(DirectorPermission.FreeCamera, out message))
+        {
+            Show(message);
+            return false;
+        }
+        if (!TryResolveReplayActor(actorKey, out DirectorReplayActorPathSource source, out Entity? target)
+            || target is null
+            || !TryCreateReplayTrackingTargetPose(target, "head", out DirectorReplayTrackedTargetPose head))
+        {
+            message = Lang.Get("vsdirector:replay-move-to-player-missing");
+            Show(message);
+            return false;
+        }
+        if (!controller.TryCaptureCurrentView("Replay move to player", out CameraPreset pose))
+        {
+            message = Lang.Get("vsdirector:capture-failed");
+            Show(message);
+            return false;
+        }
+
+        // Level camera 4 blocks behind the head and 1.2 above, then aim at the head.
+        CameraPreset behind = DirectorReplayCameraElementMath.EvaluateTrack(
+            new DirectorReplayElementKeyframe
+            {
+                Pitch = (float)-head.PitchDegrees,
+                ViewOffsetY = 1.2d,
+                ViewOffsetZ = 4d
+            },
+            head,
+            pose.Fov);
+        double dx = head.X - behind.X;
+        double dy = head.Y - behind.Y;
+        double dz = head.Z - behind.Z;
+        double horizontal = Math.Sqrt(dx * dx + dz * dz);
+        pose.X = behind.X;
+        pose.Y = behind.Y;
+        pose.Z = behind.Z;
+        pose.Dimension = head.Dimension;
+        if (double.IsFinite(horizontal) && horizontal > 0.0001d)
+        {
+            pose.Yaw = (float)(Math.Atan2(-dx, -dz) * 180d / Math.PI);
+            pose.Pitch = (float)(Math.Atan2(dy, horizontal) * 180d / Math.PI);
+        }
+        pose.Roll = 0f;
+        pose.Name = "Replay move to player";
+        pose.Id = Guid.Empty;
+        if (!controller.TrySetReplayPose(pose, out string error))
+        {
+            message = Lang.Get("vsdirector:camera-error", error);
+            Show(message);
+            return false;
+        }
+
+        replayViewportCameraAuthority = DirectorReplayCameraAuthority.ManualFree;
+        replayCameraState = DirectorReplayCameraState.Free;
+        anchorClient?.Update(controller.CurrentPose, active: true);
+        message = Lang.Get("vsdirector:replay-move-to-player-done",
+            source.DisplayName.Length > 0 ? source.DisplayName : source.ActorKey);
+        Show(message);
+        return true;
+    }
+
     internal bool TryLookAtReplayEntity(Entity target, out string message)
     {
         ArgumentNullException.ThrowIfNull(target);
@@ -10906,6 +10981,50 @@ public sealed partial class VSDirectorModSystem : ModSystem
             "replay-invalid-speed" => Lang.Get("vsdirector:replay-invalid-speed"),
             _ => Lang.Get("vsdirector:replay-error", error)
         };
+
+    /// <summary>True while the replay camera follows the timeline (what an export records).</summary>
+    internal bool IsReplayTimelineCameraActive
+        => replay?.IsPlaying == true
+            && replayViewportCameraAuthority == DirectorReplayCameraAuthority.Timeline;
+
+    /// <summary>
+    /// Leaves free-camera editing and hands the camera back to the timeline, so the viewport
+    /// again shows what the camera, follow, track, FOV and shake elements will record.
+    /// Clicking in the replay viewport or flying the free camera is what switches it away.
+    /// </summary>
+    internal bool TryReturnReplayToTimelineCamera(out string message)
+    {
+        if (replay?.IsPlaying != true || controller is null)
+        {
+            message = Lang.Get("vsdirector:replay-not-playing");
+            Show(message);
+            return false;
+        }
+        ClearReplayActorAttachment();
+        StopReplayActorPathFollow(deactivate: false);
+        controller.ResetReplayPreviewFollowState();
+        replayShootingBasePose = null;
+        replayViewportCameraAuthority = DirectorReplayCameraAuthority.Timeline;
+        if (controller.IsFreeCamera)
+        {
+            replayCameraState = DirectorReplayCameraState.Free;
+        }
+        workspace?.Refresh();
+        _ = workspace?.KeepReplayWorkspaceVisible();
+        message = Lang.Get("vsdirector:replay-timeline-camera-enabled");
+        Show(message);
+        return true;
+    }
+
+    /// <summary>Switches between the timeline (shot) camera and free-camera editing.</summary>
+    internal bool TryToggleReplayTimelineCamera(out string message)
+    {
+        if (IsReplayTimelineCameraActive)
+        {
+            return TryToggleReplayFreeCamera(out message);
+        }
+        return TryReturnReplayToTimelineCamera(out message);
+    }
 
     internal bool TryToggleReplayFreeCamera(out string message)
     {

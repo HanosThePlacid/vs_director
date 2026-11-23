@@ -49,7 +49,7 @@ internal sealed partial class DirectorWorkspaceHud
             };
         }
         bool entityPopup = replay && replayFloatingEditorKind == ReplayFloatingEditorKind.EntityPopup;
-        bool addMenu = replay ? replayFloatingEditorKind == ReplayFloatingEditorKind.AddElement : pathFloatingEditorKind == PathFloatingEditorKind.AddElement;
+        bool addMenu = replay ? replayFloatingEditorKind is ReplayFloatingEditorKind.AddElement or ReplayFloatingEditorKind.PlayerPicker : pathFloatingEditorKind == PathFloatingEditorKind.AddElement;
         var form = new DirectorImGuiForm
         {
             // A scrolling property body needs a stable height. Auto-fitting a
@@ -61,6 +61,7 @@ internal sealed partial class DirectorWorkspaceHud
         if (replay)
         {
             if (entityPopup) RmlReplayEntityPopup(form);
+            else if (replayFloatingEditorKind == ReplayFloatingEditorKind.PlayerPicker) RmlReplayPlayerPicker(form);
             else if (replayFloatingEditorKind is ReplayFloatingEditorKind.AddElement or ReplayFloatingEditorKind.Track or ReplayFloatingEditorKind.NewScene or ReplayFloatingEditorKind.RenameScene)
                 RmlReplayTimelineMenu(form);
             else if (replayFloatingEditorKind == ReplayFloatingEditorKind.CameraKeyframe) RmlReplayCameraKeyframe(form);

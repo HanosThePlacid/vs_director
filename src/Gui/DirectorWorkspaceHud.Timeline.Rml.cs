@@ -195,6 +195,10 @@ internal sealed partial class DirectorWorkspaceHud
                 owner.ReplayBasePlaybackSpeed > 1 ? "active" : "");
             Button("replaySkipForward", 4, "replay-skip-forward", "track-next", SkipReplayForward, playing);
             Button("exit", 5, "replay-exit", "stop", StopReplay, playing);
+            Button("replayShotCamera", 6, owner.IsReplayTimelineCameraActive ? "replay-free-camera-button" : "replay-timeline-camera-button",
+                "video", ToggleReplayShotCamera, playing, owner.IsReplayTimelineCameraActive ? "active" : "");
+            Button("replayMoveToPlayer", 7, "replay-move-to-player", "focus-2", OpenReplayPlayerPicker, playing);
+            Button("replayTimelineFit", 8, "replay-timeline-fit", "arrows-maximize", FitReplayTimeline, playing);
         }
         else
         {
@@ -304,12 +308,36 @@ internal sealed partial class DirectorWorkspaceHud
                 pathTimelineFirstVisibleTrack, visible, width);
     }
 
+    /// <summary>
+    /// When a replay is opened and does not fit at the current zoom, start with the whole
+    /// recording in view. Runs once per opened replay, so later zooming is kept.
+    /// </summary>
+    private void AutoFitOpenedReplay(double contentWidth, int durationTicks)
+    {
+        Guid replayId = owner.ActiveReplayId;
+        if (replayId == replayTimelineAutoFitReplayId
+            || replayId == Guid.Empty
+            || !owner.IsReplayPlaying
+            || owner.ReplayDurationSeconds <= 0d
+            || contentWidth <= 1d)
+        {
+            return;
+        }
+        replayTimelineAutoFitReplayId = replayId;
+        if (durationTicks * ReplayTimelinePixelsPerTick > contentWidth)
+        {
+            replayTimelineFitPixelsPerTick = contentWidth / Math.Max(1, durationTicks);
+            replayTimelineScrollTicks = 0d;
+        }
+    }
+
     private void BuildRmlReplayTimeline(double width, double height, double label)
     {
         var timeline = CurrentReplayViewportTimeline();
         var tracks = timeline.Tracks.Where(t => t.TrackType != DirectorReplayElementTrackType.Marker).ToList();
-        double pixels = ReplayTimelinePixelsPerTick;
         int duration = ReplayTimelineDurationTicks();
+        AutoFitOpenedReplay(width - label, duration);
+        double pixels = ReplayTimelinePixelsPerTick;
         replayTimelineScrollTicks = Math.Clamp(replayTimelineScrollTicks, 0, Math.Max(0, duration - (width - label) / pixels));
         double X(double seconds) => label + (seconds * ReplayTimelineTicksPerSecond - replayTimelineScrollTicks) * pixels;
         double Time(DirectorReplayElementKeyframe frame) => replayAuxiliaryKeyframeDragKind == ReplayAuxiliaryKeyframeDragKind.Element

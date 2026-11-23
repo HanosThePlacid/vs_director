@@ -737,6 +737,49 @@ internal sealed partial class DirectorWorkspaceHud
         return firstPlayer ?? sources[0];
     }
 
+    private bool OpenReplayPlayerPicker()
+    {
+        IReadOnlyList<DirectorReplayActorPathSource> players = ReplayPlayerSources();
+        if (players.Count == 0)
+        {
+            capi.ShowChatMessage(Lang.Get("vsdirector:replay-preset-no-player"));
+            return true;
+        }
+        if (players.Count == 1)
+        {
+            return MoveCameraToReplayPlayer(players[0].ActorKey);
+        }
+        ShowReplayFloatingEditor(ReplayFloatingEditorKind.PlayerPicker);
+        return true;
+    }
+
+    private bool ToggleReplayShotCamera()
+    {
+        _ = owner.TryToggleReplayTimelineCamera(out _);
+        ComposeTimeline();
+        return true;
+    }
+
+    private bool MoveCameraToReplayPlayer(string actorKey)
+    {
+        if (replayFloatingEditorKind == ReplayFloatingEditorKind.PlayerPicker)
+        {
+            CloseReplayFloatingEditor();
+        }
+        _ = owner.TryMoveCameraToReplayActor(actorKey, out _);
+        return true;
+    }
+
+    private void RmlReplayPlayerPicker(DirectorImGuiForm form)
+        => form.ChoiceList(ReplayPlayerSources()
+            .Select(source =>
+            {
+                string key = source.ActorKey;
+                return new DirectorImGuiChoice("player-" + key, PlayerLabel(source),
+                    () => MoveCameraToReplayPlayer(key), "focus-2");
+            })
+            .ToArray());
+
     /// <summary>Player-by-name picker for follow and tracking keyframes.</summary>
     private void RmlReplayPlayerSelect(DirectorImGuiForm form)
         => RmlReplayActorSelect(form, "entityActorKey", "entityId", "replay-element-player", allowNone: false);

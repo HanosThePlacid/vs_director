@@ -68,7 +68,11 @@ internal sealed partial class DirectorWorkspaceHud : GuiDialog
     private const double DefaultTimelapseDurationSeconds = 5d;
     private const double MaxTimelapseDurationSeconds = 86400d;
     private const double ReplayTimelineBasePixelsPerTick = 20d;
-    private static readonly int[] ReplayTimelineTickScaleLevels = { 30, 15, 10, 5, 0 };
+    // Replay timeline zoom ladder, finest first: ticks between minor ruler marks
+    // (30 ticks = 1 s). Minor marks are ReplayTimelineBasePixelsPerTick apart and a
+    // labelled mark comes every 5 minor marks. The last levels (3 s to 1 min) let long
+    // recordings fit on screen.
+    private static readonly int[] ReplayTimelineMinorTickSteps = { 1, 2, 3, 6, 30, 90, 300, 900, 1800 };
     private const double ReplayTimelineLabelColumnExpansion = 24d;
     private const double ReplayTimelineLabelColumnBaseMinimum = 220d;
     private const double ReplayTimelineLabelColumnBaseMaximum = 280d;
@@ -2820,6 +2824,7 @@ internal sealed partial class DirectorWorkspaceHud : GuiDialog
             ReplayFloatingEditorKind.EntityPopup => Lang.Get("vsdirector:replay-entity-popup-title"),
             ReplayFloatingEditorKind.NewScene => Lang.Get("vsdirector:replay-scene-new"),
             ReplayFloatingEditorKind.RenameScene => Lang.Get("vsdirector:replay-scene-rename"),
+            ReplayFloatingEditorKind.PlayerPicker => Lang.Get("vsdirector:replay-move-to-player"),
             _ => string.Empty
         };
 
@@ -18879,35 +18884,47 @@ internal sealed partial class DirectorWorkspaceHud : GuiDialog
             ColorUtil.ToRgba(255, 255, 255, 255));
     }
 
-    private int ReplayTimelineTickScale
-        => ReplayTimelineTickScaleLevels[Math.Clamp(
-            replayTimelineTickScaleIndex,
-            0,
-            ReplayTimelineTickScaleLevels.Length - 1)];
-
     private int ReplayTimelineMinorTickStep
-        => ReplayTimelineTickScale switch
+    {
+        get
         {
-            30 => 1,
-            15 => 2,
-            10 => 3,
-            5 => 6,
-            _ => 30
-        };
+            if (replayTimelineFitPixelsPerTick is double fit)
+            {
+                // Fit zoom sits between ladder levels: use the finest step whose minor
+                // marks are still far enough apart for the 5-step labels not to overlap.
+                foreach (int step in ReplayTimelineMinorTickSteps)
+                {
+                    if (step * fit >= ReplayTimelineBasePixelsPerTick * 0.8d) return step;
+                }
+                return ReplayTimelineMinorTickSteps[^1];
+            }
+            return ReplayTimelineMinorTickSteps[Math.Clamp(
+                replayTimelineTickScaleIndex,
+                0,
+                ReplayTimelineMinorTickSteps.Length - 1)];
+        }
+    }
 
-    private int ReplayTimelineLabelTickStep
-        => ReplayTimelineTickScale switch
-        {
-            30 => 5,
-            15 => 10,
-            10 => 15,
-            5 => 30,
-            _ => 150
-        };
+    private int ReplayTimelineLabelTickStep => ReplayTimelineMinorTickStep * 5;
+
+    // Set when the whole recording is fitted into the view (Fit button, or zooming out
+    // past the coarsest level that still overflows). Picking a ladder level clears it.
+    private double? replayTimelineFitPixelsPerTick;
+    private Guid replayTimelineAutoFitReplayId;
 
     private double ReplayTimelinePixelsPerTick
-        => ReplayTimelineBasePixelsPerTick / ReplayTimelineMinorTickStep;
+        => replayTimelineFitPixelsPerTick
+            ?? ReplayTimelineBasePixelsPerTick / ReplayTimelineMinorTickStep;
 
+    /// <summary>Unscaled pixels per tick that show the whole recording.</summary>
+    private double ReplayTimelineFitPixelsPerTick(ElementBounds bounds)
+        => ReplayTimelineContentWidth(bounds) / Math.Max(0.001d, GuiElement.scaled(1d))
+            / Math.Max(1d, ReplayTimelineDurationTicks());
+
+    /// <summary>
+    /// Ctrl+wheel zoom. Steps through the ladder, keeps the tick under the mouse in place,
+    /// and zooming out stops once the whole recording is visible.
+    /// </summary>
     private void ZoomReplayTimeline(double direction, double mouseX)
     {
         if (replayTimelineBounds is null || Math.Abs(direction) <= double.Epsilon)
@@ -18916,19 +18933,70 @@ internal sealed partial class DirectorWorkspaceHud : GuiDialog
         }
         replayTimelineBounds.CalcWorldBounds();
         double left = ReplayTimelineContentLeft(replayTimelineBounds);
-        double oldPixelsPerTick = GuiElement.scaled(ReplayTimelinePixelsPerTick);
+        double current = ReplayTimelinePixelsPerTick;
         double anchorTick = replayTimelineScrollTicks
             + (mouseX - left)
-                / DirectorTimelineCoordinateMath.PositivePixelsPerTick(oldPixelsPerTick);
-        replayTimelineTickScaleIndex = Math.Clamp(
-            replayTimelineTickScaleIndex + (direction > 0d ? -1 : 1),
-            0,
-            ReplayTimelineTickScaleLevels.Length - 1);
+                / DirectorTimelineCoordinateMath.PositivePixelsPerTick(GuiElement.scaled(current));
+        double fit = ReplayTimelineFitPixelsPerTick(replayTimelineBounds);
+        if (direction > 0d)
+        {
+            // In: the coarsest level that is finer than the current zoom.
+            int index = -1;
+            for (int i = ReplayTimelineMinorTickSteps.Length - 1; i >= 0; i--)
+            {
+                if (ReplayTimelineBasePixelsPerTick / ReplayTimelineMinorTickSteps[i] > current * 1.001d)
+                {
+                    index = i;
+                    break;
+                }
+            }
+            if (index < 0) return;
+            replayTimelineTickScaleIndex = index;
+            replayTimelineFitPixelsPerTick = null;
+        }
+        else
+        {
+            // Out: the finest level that is coarser than the current zoom, but never
+            // further than showing the whole recording.
+            if (current <= fit * 1.001d) return;
+            int index = -1;
+            for (int i = 0; i < ReplayTimelineMinorTickSteps.Length; i++)
+            {
+                if (ReplayTimelineBasePixelsPerTick / ReplayTimelineMinorTickSteps[i] < current * 0.999d)
+                {
+                    index = i;
+                    break;
+                }
+            }
+            if (index < 0 || ReplayTimelineBasePixelsPerTick / ReplayTimelineMinorTickSteps[index] <= fit)
+            {
+                replayTimelineFitPixelsPerTick = fit;
+            }
+            else
+            {
+                replayTimelineTickScaleIndex = index;
+                replayTimelineFitPixelsPerTick = null;
+            }
+        }
         double newPixelsPerTick = GuiElement.scaled(ReplayTimelinePixelsPerTick);
         replayTimelineScrollTicks = anchorTick
             - (mouseX - left)
                 / DirectorTimelineCoordinateMath.PositivePixelsPerTick(newPixelsPerTick);
         ScrollReplayTimeline(0d);
+    }
+
+    /// <summary>Transport button: show the whole recording.</summary>
+    private bool FitReplayTimeline()
+    {
+        if (replayTimelineBounds is null)
+        {
+            return false;
+        }
+        replayTimelineBounds.CalcWorldBounds();
+        replayTimelineFitPixelsPerTick = ReplayTimelineFitPixelsPerTick(replayTimelineBounds);
+        replayTimelineScrollTicks = 0d;
+        ComposeTimeline();
+        return true;
     }
 
     private double ReplayTimeAt(double mouseX)
@@ -22238,7 +22306,8 @@ internal sealed partial class DirectorWorkspaceHud : GuiDialog
         ElementKeyframe,
         EntityPopup,
         NewScene,
-        RenameScene
+        RenameScene,
+        PlayerPicker
     }
 
     private enum ReplayTimelineElementKind
